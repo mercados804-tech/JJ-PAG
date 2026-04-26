@@ -112,6 +112,19 @@ async function ensureSchema() {
       } catch (err) {
         // Ignorar si la columna ya existe
       }
+      try { await pool.query('ALTER TABLE promotions ADD COLUMN promo_price INT NULL'); } catch (_) { void 0; }
+      try { await pool.query('ALTER TABLE promotions ADD COLUMN promo_stock INT NOT NULL DEFAULT 0'); } catch (_) { void 0; }
+      try { await pool.query('ALTER TABLE promotions ADD COLUMN promo_stock_remaining INT NOT NULL DEFAULT 0'); } catch (_) { void 0; }
+      try { await pool.query('ALTER TABLE promotions ADD COLUMN start_at DATETIME NULL'); } catch (_) { void 0; }
+      try { await pool.query('ALTER TABLE promotions ADD COLUMN end_at DATETIME NULL'); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE promotions ADD COLUMN state VARCHAR(32) NULL"); } catch (_) { void 0; }
+
+      try { await pool.query('ALTER TABLE sales ADD COLUMN promotion_id INT UNSIGNED NULL'); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE sales ADD COLUMN price_type VARCHAR(20) NOT NULL DEFAULT 'normal'"); } catch (_) { void 0; }
+
+      try { await pool.query('UPDATE promotions SET promo_price = COALESCE(promo_price, price) WHERE promo_price IS NULL'); } catch (_) { void 0; }
+      try { await pool.query('UPDATE promotions SET promo_stock_remaining = COALESCE(promo_stock_remaining, promo_stock, 0)'); } catch (_) { void 0; }
+      try { await pool.query("UPDATE promotions SET state = COALESCE(state, 'activa')"); } catch (_) { void 0; }
     }
 
     // Ejecutar seed.sql (si existe)

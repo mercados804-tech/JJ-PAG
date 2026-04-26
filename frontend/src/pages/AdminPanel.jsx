@@ -1627,13 +1627,6 @@ export default function AdminPanel() {
     if (!token) { notify('Sesión expirada', 'error'); navigate('/admin/login'); return }
     if (!confirm('¿Marcar esta promoción como agotada?')) return
     const payload = {
-      title: (promo.title || '').trim(),
-      description: (promo.description || '').trim(),
-      price: promo.precio_promocion == null ? null : Number(promo.precio_promocion),
-      sizes: (promo.sizes || '').trim() || null,
-      stockPromocion: 0,
-      fechaInicio: promo.fecha_inicio || null,
-      fechaFin: promo.fecha_fin || null,
       estado: 'agotada',
     }
     try {

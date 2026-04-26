@@ -2042,6 +2042,25 @@ app.put('/api/admin/promotions/:id', requirePromotionsAccess, async (req, res) =
     const currentTotal = Number(current.promo_stock) || 0;
     const currentRemaining = Number(current.promo_stock_remaining) || 0;
     const soldQty = Math.max(currentTotal - currentRemaining, 0);
+    const estadoLower = String(estado || '').trim().toLowerCase();
+
+    if (estadoLower === 'agotada') {
+      if (currentRemaining > 0 && current.product_id != null) {
+        await db.query('UPDATE products SET quantity = quantity + ? WHERE id = ?', [currentRemaining, current.product_id]);
+      }
+      const result = await db.query(
+        `UPDATE promotions
+         SET promo_stock_remaining = 0,
+             state = 'agotada'
+         WHERE id = ?`,
+        [id]
+      );
+      if (result.affectedRows && result.affectedRows > 0) {
+        safePersistState();
+        return res.json({ ok: true, id });
+      }
+      throw new Error('No DB row updated');
+    }
     const requestedTotal = stockPromocion == null || stockPromocion === '' ? currentTotal : Number(stockPromocion);
     if (stockPromocion != null && stockPromocion !== '' && requestedTotal < 15) {
       return res.status(400).json({ ok: false, error: 'El stock promocional minimo es 15' });
@@ -2103,6 +2122,21 @@ app.put('/api/admin/promotions/:id', requirePromotionsAccess, async (req, res) =
     const currentTotal = Number(current.stock_promocion) || 0;
     const currentRemaining = Number(current.stock_promocion_restante) || 0;
     const soldQty = Math.max(currentTotal - currentRemaining, 0);
+    const estadoLower = String(estado || '').trim().toLowerCase();
+
+    if (estadoLower === 'agotada') {
+      const product = getMemoryProduct({ id: Number(current.product_id) || NaN });
+      if (product && currentRemaining > 0) {
+        product.quantity = (Number(product.quantity) || 0) + currentRemaining;
+      }
+      memory.promotions[idx] = {
+        ...current,
+        stock_promocion_restante: 0,
+        estado: 'agotada',
+      };
+      safePersistState();
+      return res.json({ ok: true, id, stored: 'memory' });
+    }
     const requestedTotal = stockPromocion == null || stockPromocion === '' ? currentTotal : Number(stockPromocion);
     if (stockPromocion != null && stockPromocion !== '' && requestedTotal < 15) {
       return res.status(400).json({ ok: false, error: 'El stock promocional minimo es 15' });
