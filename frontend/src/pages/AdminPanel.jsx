@@ -1455,7 +1455,11 @@ export default function AdminPanel() {
         body: JSON.stringify({ productId: productId ? Number(productId) : undefined, productName: productName || undefined, quantity: q, price: unitPrice != null && !Number.isNaN(Number(unitPrice)) ? Number(unitPrice) : undefined })
       })
       const data = await resp.json()
-      if (!resp.ok || !data.ok) { notify(data.error || 'Error al registrar la venta', 'error'); return false }
+      if (!resp.ok || !data.ok) {
+        const extra = data && data.available != null ? ` (Disponible: ${Number(data.available) || 0})` : ''
+        notify((data?.error || 'Error al registrar la venta') + extra, 'error')
+        return false
+      }
       await Promise.all([refreshProducts(), refreshStats(), refreshSalesLog()])
 
       // Actualizar también la serie de ventas para el gráfico

@@ -1159,25 +1159,34 @@ app.post('/api/admin/sales', requireSalesAccess, async (req, res) => {
     }
     if (!product) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
 
-    const promoResult = await db.query(
-      `SELECT id, promo_price, promo_stock_remaining, state, start_at, end_at
-       FROM promotions
-       WHERE product_id = ?
-       ORDER BY id DESC`,
-      [product.id]
-    );
-    const promoRows = Array.isArray(promoResult.rows) ? promoResult.rows : [];
-    const activePromo = promoRows.find((row) => normalizePromotionState({
-      estado: row.state,
-      fecha_inicio: row.start_at,
-      fecha_fin: row.end_at,
-      stock_promocion_restante: row.promo_stock_remaining,
-    }) === 'activa' && (Number(row.promo_stock_remaining) || 0) > 0) || null;
+    let activePromo = null;
+    try {
+      const promoResult = await db.query(
+        `SELECT id, promo_price, promo_stock_remaining, state, start_at, end_at
+         FROM promotions
+         WHERE product_id = ?
+         ORDER BY id DESC`,
+        [product.id]
+      );
+      const promoRows = Array.isArray(promoResult.rows) ? promoResult.rows : [];
+      activePromo = promoRows.find((row) => normalizePromotionState({
+        estado: row.state,
+        fecha_inicio: row.start_at,
+        fecha_fin: row.end_at,
+        stock_promocion_restante: row.promo_stock_remaining,
+      }) === 'activa' && (Number(row.promo_stock_remaining) || 0) > 0) || null;
+    } catch (_) {
+      activePromo = null;
+    }
 
     const generalStock = Number(product.quantity) || 0;
     const promoStock = activePromo ? (Number(activePromo.promo_stock_remaining) || 0) : 0;
     if (q > generalStock + promoStock) {
-      return res.status(400).json({ ok: false, error: 'Stock insuficiente para registrar la venta' });
+      return res.status(400).json({
+        ok: false,
+        error: 'Stock insuficiente para registrar la venta',
+        available: generalStock + promoStock,
+      });
     }
 
     const promoQty = activePromo ? Math.min(q, promoStock) : 0;
@@ -1197,13 +1206,17 @@ app.post('/api/admin/sales', requireSalesAccess, async (req, res) => {
       );
     }
     if (promoQty > 0) {
-      await db.query(
-        `UPDATE promotions
-         SET promo_stock_remaining = GREATEST(promo_stock_remaining - ?, 0),
-             state = CASE WHEN promo_stock_remaining - ? <= 0 THEN 'agotada' ELSE state END
-         WHERE id = ?`,
-        [promoQty, promoQty, activePromo.id]
-      );
+      try {
+        await db.query(
+          `UPDATE promotions
+           SET promo_stock_remaining = GREATEST(promo_stock_remaining - ?, 0),
+               state = CASE WHEN promo_stock_remaining - ? <= 0 THEN 'agotada' ELSE state END
+           WHERE id = ?`,
+          [promoQty, promoQty, activePromo.id]
+        );
+      } catch (_) {
+        void 0;
+      }
     }
 
     const saleTs = new Date().toISOString();
