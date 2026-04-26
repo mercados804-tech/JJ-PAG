@@ -85,7 +85,6 @@ function buildProductsList(list) {
 
   const extras = Array.from(apiMap.values())
     .filter((item) => !productTemplateMap.has(Number(item.id)))
-    .filter((item) => Number(item.id) > 118 || String(item.image || '').startsWith('data:'))
     .sort((a, b) => Number(b.id) - Number(a.id))
 
   const merged = [...extras, ...ordered]
@@ -118,8 +117,7 @@ export default function Productos() {
       .filter(p => !templateIdSet.has(Number(p.id)))
       .filter(p => !shouldHide(p))
       .sort((a, b) => Number(b.id) - Number(a.id))
-    const extraSlots = Math.max(20 - orderedTemplates.length, 0)
-    return [...extras.slice(0, extraSlots), ...orderedTemplates].slice(0, 20)
+    return [...extras, ...orderedTemplates]
   })()
 
   useEffect(() => {
