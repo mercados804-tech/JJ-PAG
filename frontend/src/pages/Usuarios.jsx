@@ -175,6 +175,7 @@ export default function Usuarios() {
       
       setVerificationEmail(emailNormalized)
       setVerificationCode(data.devCode ? String(data.devCode) : '')
+      setLastPassword(values.password)
       setShowVerification(true)
       notify('Registro exitoso. Ingresá el código enviado a tu email.', 'success')
       
@@ -231,7 +232,9 @@ export default function Usuarios() {
         }
       }
 
-      notify('Por favor, inicia sesión ahora.', 'info')
+      localStorage.setItem('userId', emailNorm)
+      notify('Bienvenido', 'success')
+      navigate('/mi-espacio', { replace: true })
     } catch {
       notify('Error al conectar con el servidor para verificar', 'error')
     } finally {
