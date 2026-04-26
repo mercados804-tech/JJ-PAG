@@ -138,8 +138,27 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+app.get('/api/health', async (req, res) => {
+  const commit = process.env.RENDER_GIT_COMMIT || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || null;
+  let dbOk = false;
+  let dbError = null;
+  if (DB_ENABLED) {
+    try {
+      await db.query('SELECT 1 AS ok');
+      dbOk = true;
+    } catch (err) {
+      dbOk = false;
+      dbError = err?.message || String(err);
+    }
+  }
+  res.json({
+    status: 'ok',
+    commit,
+    dbEnabled: DB_ENABLED,
+    dbOk,
+    dbError,
+    persistPath: PERSIST_PATH,
+  });
 });
 
 // Inicialización automática de DB (schema + seed, idempotente)
@@ -333,8 +352,12 @@ const memory = {
   payments: { mpPrefs: {} }, // payments.mpPrefs[preferenceId] = orderId
 };
 
-const PERSIST_DIR = path.join(__dirname, '..', 'data');
-const PERSIST_PATH = path.join(PERSIST_DIR, 'persist.json');
+const PERSIST_DIR = process.env.PERSIST_DIR
+  ? path.resolve(String(process.env.PERSIST_DIR))
+  : path.join(__dirname, '..', 'data');
+const PERSIST_PATH = process.env.PERSIST_PATH
+  ? path.resolve(String(process.env.PERSIST_PATH))
+  : path.join(PERSIST_DIR, 'persist.json');
 
 function safePersistState() {
   try {

@@ -121,17 +121,32 @@ export default function Promociones() {
         
         // Mapeamos las legacyPromos para asegurar que todas estén presentes
         const merged = legacyPromos.map(lp => {
-          // Buscamos si hay una promoción activa que coincida con esta legacy (por título o imagen)
-          const active = activePromos.find(ap => 
-            (ap.title && ap.title.toLowerCase() === lp.title.toLowerCase()) || 
-            (ap.image && ap.image === lp.image)
+          const active = activePromos.find(ap =>
+            Number(ap?.id) === Number(lp.id) && (ap?.isLegacy || ap?.productId == null)
+          ) || activePromos.find(ap =>
+            (ap?.title && ap.title.toLowerCase() === lp.title.toLowerCase()) ||
+            (ap?.image && ap.image === lp.image)
           )
           // Si hay active, usamos su productId (camelCase del backend) o su id. Si no, usamos el id de legacy.
           const productId = active ? (active.productId || active.product_id || active.id) : lp.id
           if (active?.deleted || active?.estado === 'eliminada') return null
-          return active 
-            ? { ...lp, ...active, isLegacy: false, detailHref: `/comprar/${productId}` } 
-            : { ...lp, isLegacy: true, estado: 'potencial', detailHref: `/comprar/${lp.id}` }
+          if (active) {
+            if (active.isLegacy || active.productId == null) {
+              return {
+                ...lp,
+                ...active,
+                title: lp.title,
+                description: lp.description,
+                image: lp.image,
+                price: lp.price,
+                sizes: lp.sizes,
+                isLegacy: true,
+                detailHref: `/comprar/${lp.id}`,
+              }
+            }
+            return { ...lp, ...active, isLegacy: false, detailHref: `/comprar/${productId}` }
+          }
+          return { ...lp, isLegacy: true, estado: 'potencial', detailHref: `/comprar/${lp.id}` }
         }).filter(Boolean)
 
         // También agregamos promociones que no están en legacy
