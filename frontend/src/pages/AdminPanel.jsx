@@ -1556,6 +1556,17 @@ export default function AdminPanel() {
     setPromoFechaFin('')
   }
 
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return
+      clearProductDraft()
+      clearPromotionDraft()
+      setPromotionDetail(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const createPromotion = async (e) => {
     e.preventDefault()
     const token = localStorage.getItem('adminToken')
@@ -2423,7 +2434,12 @@ export default function AdminPanel() {
                 )}
 
                 {showCreateProductModal && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+                    onMouseDown={(e) => {
+                      if (e.target === e.currentTarget) clearProductDraft()
+                    }}
+                  >
                     <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto bg-white rounded-[2rem] border border-gray-100 p-6 shadow-2xl">
                       <div className="flex items-center justify-between gap-3 mb-6">
                         <div>
@@ -2513,7 +2529,12 @@ export default function AdminPanel() {
                 )}
 
                 {(showPromotionModal || promoProductId) && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+                    onMouseDown={(e) => {
+                      if (e.target === e.currentTarget) clearPromotionDraft()
+                    }}
+                  >
                     <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white rounded-[2rem] border border-gray-100 p-6 shadow-2xl">
                       <div className="flex items-center justify-between gap-3 mb-6">
                         <div>
@@ -3027,7 +3048,12 @@ export default function AdminPanel() {
               </div>
 
               {promotionDetail && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+                  onMouseDown={(e) => {
+                    if (e.target === e.currentTarget) setPromotionDetail(null)
+                  }}
+                >
                   <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto bg-white rounded-[2rem] border border-gray-100 p-6 shadow-2xl">
                     <div className="flex items-center justify-between gap-3 mb-6">
                       <div>
