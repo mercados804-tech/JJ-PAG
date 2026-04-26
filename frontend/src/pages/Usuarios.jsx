@@ -63,28 +63,40 @@ export default function Usuarios() {
       const postJson = async (url, body) => {
         const r = await fetch(apiUrl(url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         const d = await r.json().catch(() => ({}))
-        return { ok: r.ok, data: d }
+        return { ok: r.ok, status: r.status, data: d }
       }
 
       // Intento primero login de admin: si las credenciales son de admin, obtendrás token y se redirige al panel
       const adminResp = await postJson('/api/auth/admin/login', payload)
-      if (adminResp.ok) {
-        const adminData = adminResp.data
-        if (adminData && adminData.ok && adminData.token) {
-          localStorage.removeItem('userId') // Limpiar posible ID de usuario anterior
-          localStorage.setItem('adminToken', adminData.token)
-          localStorage.setItem('adminRole', adminData.role || '')
-          localStorage.setItem('adminName', adminData.name || '')
-          localStorage.setItem('adminEmail', adminData.email || emailNormalized)
-          notify('Ingreso admin exitoso', 'success')
-          navigate('/admin', { replace: true })
-          setTimeout(() => {
-            if (window && window.location && window.location.pathname !== '/admin') {
-              window.location.assign('/admin')
-            }
-          }, 50)
-          return
+      const adminData = adminResp.data
+      if (adminResp.ok && adminData && adminData.ok && adminData.token) {
+        localStorage.removeItem('userId') // Limpiar posible ID de usuario anterior
+        localStorage.setItem('adminToken', adminData.token)
+        localStorage.setItem('adminRole', adminData.role || '')
+        localStorage.setItem('adminName', adminData.name || '')
+        localStorage.setItem('adminEmail', adminData.email || emailNormalized)
+        notify('Ingreso admin exitoso', 'success')
+        navigate('/admin', { replace: true })
+        setTimeout(() => {
+          if (window && window.location && window.location.pathname !== '/admin') {
+            window.location.assign('/admin')
+          }
+        }, 50)
+        return
+      }
+
+      if (adminResp.status === 403 && adminData && (adminData.error || '').toLowerCase().includes('verific')) {
+        setVerificationEmail(emailNormalized)
+        setLastPassword(values.password)
+        setShowVerification(true)
+        notify('Tu cuenta de panel no está verificada. Ingresá el código enviado a tu email.', 'warning')
+        try {
+          const vResp = await postJson('/api/auth/send-verification', { email: emailNormalized })
+          if (vResp.ok && vResp.data?.devCode) setVerificationCode(String(vResp.data.devCode))
+        } catch {
+          void 0
         }
+        return
       }
 
       // Si no es admin o falló, realizo login de usuario normal
@@ -215,6 +227,31 @@ export default function Usuarios() {
 
       if (lastPassword) {
         const payload = { email: emailNorm, password: lastPassword }
+        const adminLoginResp = await fetch(apiUrl('/api/auth/admin/login'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).catch(() => null)
+
+        if (adminLoginResp) {
+          const adminLoginData = await adminLoginResp.json().catch(() => ({}))
+          if (adminLoginResp.ok && adminLoginData && adminLoginData.ok && adminLoginData.token) {
+            localStorage.removeItem('userId')
+            localStorage.setItem('adminToken', adminLoginData.token)
+            localStorage.setItem('adminRole', adminLoginData.role || '')
+            localStorage.setItem('adminName', adminLoginData.name || '')
+            localStorage.setItem('adminEmail', adminLoginData.email || emailNorm)
+            notify('Bienvenido', 'success')
+            navigate('/admin', { replace: true })
+            setTimeout(() => {
+              if (window && window.location && window.location.pathname !== '/admin') {
+                window.location.assign('/admin')
+              }
+            }, 50)
+            return
+          }
+        }
+
         const loginResp = await fetch(apiUrl('/api/auth/login'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -222,8 +259,9 @@ export default function Usuarios() {
         }).catch(() => null)
 
         if (loginResp && loginResp.ok) {
-          const loginData = await loginResp.json()
+          const loginData = await loginResp.json().catch(() => ({}))
           if (loginData.ok) {
+            localStorage.removeItem('adminToken')
             localStorage.setItem('userId', loginData.userId || emailNorm)
             notify('Bienvenido', 'success')
             navigate('/mi-espacio', { replace: true })
@@ -232,6 +270,7 @@ export default function Usuarios() {
         }
       }
 
+      localStorage.removeItem('adminToken')
       localStorage.setItem('userId', emailNorm)
       notify('Bienvenido', 'success')
       navigate('/mi-espacio', { replace: true })
