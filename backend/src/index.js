@@ -915,6 +915,10 @@ app.post('/api/auth/register', async (req, res) => {
 
   // Enviar correo de verificación inmediatamente (sin await para no bloquear)
   const code = generateVerificationCode();
+  if (!memory.auth) memory.auth = {};
+  if (!memory.auth.verificationCodes) memory.auth.verificationCodes = {};
+  memory.auth.verificationCodes[userId] = { code, exp: Date.now() + 30 * 60 * 1000 };
+  safePersistState();
   if (DB_ENABLED) {
     try {
       await db.query(
@@ -2679,12 +2683,12 @@ app.post('/api/auth/verify-email', async (req, res) => {
       safePersistState();
       return res.json({ ok: true, userId, message: 'Verificado correctamente' });
     } catch (err) {
-      return res.status(500).json({ ok: false, error: err?.message || 'Error interno del servidor' });
+      void 0;
     }
   }
 
   const mem = memory.auth?.verificationCodes?.[userId] || null;
-  if (!mem) return res.status(400).json({ ok: false, error: 'Código inválido o vencido' });
+  if (!mem) return res.status(400).json({ ok: false, error: 'Código inválido o vencido. Reenviá el código e intentá de nuevo.' });
   if (Date.now() > Number(mem.exp || 0)) return res.status(400).json({ ok: false, error: 'Código inválido o vencido' });
   if (String(mem.code) !== codeTrim) return res.status(400).json({ ok: false, error: 'Código inválido' });
 

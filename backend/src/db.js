@@ -29,6 +29,7 @@ if (connectionString) {
       queueLimit: 0,
     });
   } catch (err) {
+    // mysql2 soporta URI directamente
     pool = mysql.createPool(connectionString);
   }
 } else {
