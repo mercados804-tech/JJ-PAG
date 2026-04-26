@@ -117,7 +117,7 @@ export default function Promociones() {
         } catch {
           promos = []
         }
-        const activePromos = dedupeById([...(Array.isArray(promos) ? promos : []), ...buildLocalLegacyFallbacks()])
+        const activePromos = dedupeById([...buildLocalLegacyFallbacks(), ...(Array.isArray(promos) ? promos : [])])
         
         // Mapeamos las legacyPromos para asegurar que todas estén presentes
         const merged = legacyPromos.map(lp => {

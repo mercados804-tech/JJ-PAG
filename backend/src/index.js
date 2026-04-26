@@ -1274,6 +1274,7 @@ app.post('/api/admin/sales', requireSalesAccess, async (req, res) => {
     memory.sales.push(...saleItems);
     safePersistState();
 
+    let anyDbInsertFailed = false;
     for (const item of saleItems) {
       try {
         await db.query(
@@ -1281,10 +1282,27 @@ app.post('/api/admin/sales', requireSalesAccess, async (req, res) => {
           [item.productId, item.promotionId, item.name, item.quantity, item.price, item.total, item.tipo_precio]
         );
       } catch (err) {
-        console.error('Error al insertar en tabla sales:', err.message);
+        anyDbInsertFailed = true;
+        const code = err?.code || '';
+        if (typeof db.ensureSchema === 'function' && (code === 'ER_NO_SUCH_TABLE' || code === 'ER_BAD_FIELD_ERROR')) {
+          try {
+            await db.ensureSchema();
+            await db.query(
+              'INSERT INTO sales (product_id, promotion_id, name, qty, price, total, price_type) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              [item.productId, item.promotionId, item.name, item.quantity, item.price, item.total, item.tipo_precio]
+            );
+            anyDbInsertFailed = false;
+            continue;
+          } catch (err2) {
+            anyDbInsertFailed = true;
+            console.error('Error al insertar en tabla sales:', err2?.message || String(err2));
+          }
+        } else {
+          console.error('Error al insertar en tabla sales:', err.message);
+        }
       }
     }
-    return res.json({ ok: true, stored: 'db', items: saleItems });
+    return res.json({ ok: true, stored: anyDbInsertFailed ? 'memory' : 'db', items: saleItems });
   } catch (err) {
     console.error('Error en POST /api/admin/sales (DB fallback):', err.message);
     const target = getMemoryProduct({ id, productName });
