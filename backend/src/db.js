@@ -8,8 +8,29 @@ const connectionString = process.env.DATABASE_URL; // ej: mysql://user:pass@127.
 
 let pool = null;
 if (connectionString) {
-  // mysql2 soporta URI directamente
-  pool = mysql.createPool(connectionString);
+  const sslFlag = String(process.env.MYSQL_SSL || process.env.DATABASE_SSL || process.env.DB_SSL || '').trim().toLowerCase();
+  const sslEnabled = ['1', 'true', 'yes', 'on'].includes(sslFlag);
+  const rejectFlag = String(process.env.MYSQL_SSL_REJECT_UNAUTHORIZED || '').trim().toLowerCase();
+  const rejectUnauthorized = !['0', 'false', 'no', 'off'].includes(rejectFlag);
+  try {
+    const u = new URL(connectionString);
+    const port = u.port ? Number(u.port) : 3306;
+    const database = (u.pathname || '').replace(/^\//, '') || undefined;
+    pool = mysql.createPool({
+      host: u.hostname,
+      port,
+      user: decodeURIComponent(u.username || ''),
+      password: decodeURIComponent(u.password || ''),
+      database,
+      ssl: sslEnabled ? { rejectUnauthorized } : undefined,
+      multipleStatements: true,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+    });
+  } catch (err) {
+    pool = mysql.createPool(connectionString);
+  }
 } else {
   const host = process.env.MYSQL_HOST;
   const port = process.env.MYSQL_PORT ? Number(process.env.MYSQL_PORT) : undefined;
@@ -57,12 +78,17 @@ async function applySqlStatementsFromFile(relativeFilePath) {
     .split(';')
     .map(s => s.trim())
     .filter(s => s.length > 0);
-  for (const stmt of statements) {
-    try {
-      await pool.query(stmt);
-    } catch (err) {
-      // continuar en el siguiente statement para idempotencia
+  const conn = await pool.getConnection();
+  try {
+    for (const stmt of statements) {
+      try {
+        await conn.query(stmt);
+      } catch (err) {
+        void 0;
+      }
     }
+  } finally {
+    conn.release();
   }
   return true;
 }
