@@ -99,12 +99,13 @@ function Sidebar({ tab, setTab, theme }) {
   ]
   const base = theme === 'dark' ? 'bg-blue-900 text-blue-50 border-blue-800' : 'bg-white text-blue-800 border-blue-100'
   const active = theme === 'dark' ? 'bg-blue-700 text-white' : 'bg-blue-100 text-blue-900'
+  const hover = theme === 'dark' ? 'hover:bg-blue-800' : 'hover:bg-blue-50'
   return (
     <aside className={`w-56 shrink-0 rounded-xl border ${base} p-3`}> 
       <nav className="flex flex-col gap-1">
         {items.map(([key,label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${tab===key ? active : ''} hover:bg-blue-50`}
+          <button key={key} type="button" onClick={() => setTab(key)}
+            className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${tab===key ? active : ''} ${hover}`}
           >
             <span className="text-blue-700"><NavIcon name={key} /></span>
             <span>{label}</span>
@@ -123,13 +124,6 @@ export default function UserPanel() {
     return params.get('tab') || 'inicio'
   })
   const userId = useMemo(() => (localStorage.getItem('userId') || 'guest'), [])
-
-  // Sincronizar tab con URL
-  useEffect(() => {
-    const params = new URLSearchParams(location.search)
-    const t = params.get('tab')
-    if (t && t !== tab) setTab(t)
-  }, [location.search, tab])
 
   const [profile, setProfile] = useState(null)
   const [orders, setOrders] = useState([])
@@ -153,6 +147,17 @@ export default function UserPanel() {
   const statusIndex = (s) => Math.max(0, statusSteps.indexOf((s||'').toLowerCase()))
 
   const qUser = `?user=${encodeURIComponent(userId)}`
+
+  function setTabAndSync(nextTab) {
+    setTab(nextTab)
+    try {
+      const params = new URLSearchParams(location.search)
+      params.set('tab', nextTab)
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true })
+    } catch {
+      void 0
+    }
+  }
 
   function goToStore() { navigate('/productos') }
   function goToCart() { navigate('/carrito') }
@@ -374,7 +379,7 @@ export default function UserPanel() {
     <div className={theme === 'dark' ? 'bg-blue-950 min-h-screen text-blue-50' : 'bg-blue-50 min-h-screen text-blue-900'}>
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="flex gap-6">
-          <Sidebar tab={tab} setTab={setTab} theme={theme} />
+          <Sidebar tab={tab} setTab={setTabAndSync} theme={theme} />
           <div className="flex-1">
             <header className="flex flex-col md:flex-row items-center justify-between mb-10 gap-6">
               <div className="space-y-1 text-center md:text-left">
