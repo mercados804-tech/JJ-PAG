@@ -49,6 +49,40 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
+function getOrderStatusLabel(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'pendiente') return 'Pendiente';
+  if (s === 'preparando') return 'Preparando';
+  if (s === 'enviado') return 'Enviado';
+  if (s === 'entregado') return 'Entregado';
+  if (s === 'cancelado') return 'Cancelado';
+  return s || 'Actualizado';
+}
+
+function generateOrderStatusEmailHtml({ orderId, newStatus, oldStatus, frontendUrl }) {
+  const labelNew = getOrderStatusLabel(newStatus);
+  const labelOld = oldStatus ? getOrderStatusLabel(oldStatus) : null;
+  const statusLine = labelOld ? `${labelOld} → ${labelNew}` : labelNew;
+  const link = `${String(frontendUrl || '').replace(/\/$/, '')}/user-panel?tab=pedidos`;
+  return `
+    <div style="font-family: sans-serif; color: #333; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+      <h2 style="color: #1E3A8A; text-align: center;">Actualización de tu pedido</h2>
+      <p>Tu pedido <strong>#${orderId}</strong> cambió de estado:</p>
+      <div style="background: #f8f9fa; padding: 14px; border-radius: 8px; border: 1px solid #eee;">
+        <p style="margin: 0; font-weight: bold;">${statusLine}</p>
+      </div>
+      <div style="text-align: center; margin: 26px 0;">
+        <a href="${link}" style="background: #1E3A8A; color: white; padding: 12px 22px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+          Ver estado del pedido
+        </a>
+      </div>
+      <p style="font-size: 12px; color: #666; text-align: center; margin: 0;">
+        Si no realizaste este pedido, podés ignorar este mensaje.
+      </p>
+    </div>
+  `;
+}
+
 function sha256Hex(s) {
   return crypto.createHash('sha256').update(String(s)).digest('hex');
 }
@@ -1804,14 +1838,48 @@ app.put('/api/admin/orders/:id/status', requireSalesAccess, async (req, res) => 
   if (Number.isNaN(id) || !allowed.has(status)) {
     return res.status(400).json({ ok: false, error: 'Datos inválidos' });
   }
+  const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
   try {
+    const curRes = await db.query('SELECT id, customer, status FROM orders WHERE id = ? LIMIT 1', [id]);
+    const curRow = Array.isArray(curRes.rows) ? curRes.rows[0] : null;
+    if (!curRow) return res.status(404).json({ ok: false, error: 'Pedido no encontrado' });
+    const oldStatus = String(curRow.status || '').toLowerCase();
+    const customer = String(curRow.customer || '').trim();
+
+    if (oldStatus === String(status).toLowerCase()) {
+      return res.json({ ok: true, unchanged: true });
+    }
+
     const r = await db.query('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
-    if (r.affectedRows && r.affectedRows > 0) return res.json({ ok: true });
+    if (r.affectedRows && r.affectedRows > 0) {
+      if (isEmail(customer)) {
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        sendEmail({
+          to: customer,
+          subject: `Actualización de pedido #${id} - ${getOrderStatusLabel(status)}`,
+          html: generateOrderStatusEmailHtml({ orderId: id, newStatus: status, oldStatus, frontendUrl }),
+        }).catch(() => void 0);
+      }
+      return res.json({ ok: true });
+    }
     throw new Error('No row updated');
   } catch (err) {
     const idx = memory.orders.findIndex(o => o.id === id);
     if (idx < 0) return res.status(404).json({ ok: false, error: 'Pedido no encontrado' });
+    const oldStatus = String(memory.orders[idx].status || '').toLowerCase();
+    if (oldStatus === String(status).toLowerCase()) {
+      return res.json({ ok: true, unchanged: true, stored: 'memory' });
+    }
     memory.orders[idx].status = status;
+    const customer = String(memory.orders[idx].customer || '').trim();
+    if (isEmail(customer)) {
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      sendEmail({
+        to: customer,
+        subject: `Actualización de pedido #${id} - ${getOrderStatusLabel(status)}`,
+        html: generateOrderStatusEmailHtml({ orderId: id, newStatus: status, oldStatus, frontendUrl }),
+      }).catch(() => void 0);
+    }
     return res.json({ ok: true, stored: 'memory' });
   }
 });
