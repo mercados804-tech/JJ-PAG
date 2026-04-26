@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comprar - JJ Indumentaria Masculina</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brandBlue: '#003366',
+              brandNav: '#00509e',
+            },
+          },
+        },
+      }
+    </script>
+</head>
+<body class="bg-blue-50 min-h-screen font-['Roboto']">
+    <!-- Barra superior con registro, carrito, ubicación y cuadro de búsqueda -->
+    <header class="bg-brandBlue text-white">
+        <div class="top-bar">
+            <a href="https://www.google.com/maps?q=Calle+Flores+123,+Ciudad" target="_blank" class="icon-location">
+                <img src="./img/Citycons_location_icon-icons.webp" alt="Ubicación">
+            </a>
+            <div class="promo">Promoción Bancaria: 10% de descuento con tarjetas seleccionadas</div>
+            <div class="search-bar">
+                <input type="text" placeholder="Buscar productos...">
+                <button>Buscar</button>
+            </div>
+            <div class="icons">
+                <a href="./usuarios.html"><img src="./img/avatardefault_92824.webp" alt="Registrarse"></a>
+                <a href="carrito.html"><img src="./img/icon-shoppingcart_87973.webp" alt="Carrito de Compras"></a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Barra de navegación centrada -->
+    <nav class="bg-brandNav text-white flex justify-center gap-6 py-3">
+        <a href="index.html" class="text-white hover:text-white/80">Inicio</a>
+        <a href="productos.html" class="text-white hover:text-white/80">Productos</a>
+        <a href="contacto.html" class="text-white hover:text-white/80">Contacto</a>
+        <a href="ubicacion.html" class="text-white hover:text-white/80">Ubicación</a>
+        <a href="promociones.html" class="text-white hover:text-white/80">Promociones</a>
+        <a href="acerca.html" class="text-white hover:text-white/80">Acerca de Nosotros</a>
+    </nav>
+
+    <!-- Detalles del Producto -->
+    <main class="max-w-7xl mx-auto p-4">
+        <h1 class="text-2xl font-bold text-brandBlue mb-4">Detalles del Producto</h1>
+        <div class="product-details">
+            <img src="./img/stamford.webp" alt="Producto">
+            <div class="product-info">
+                <h2>Remera JJ</h2>
+                <p><strong>Precio:</strong> ARS 35,990.00</p>
+                <p><strong>Marca:</strong> JJ</p>
+                <p><strong>Categoría:</strong> Remera</p>
+                <label for="color">Color:</label>
+                <select id="color" name="color">
+                    <option value="azul">Azul</option>
+                    <option value="rojo">Rojo</option>
+                    <option value="negro">Negro</option>
+                    <option value="blanco">Blanco</option>
+                </select>
+                <label for="talle">Talle:</label>
+                <select id="talle" name="talle">
+                    <option value="S">S</option>
+                    <option value="M">M</option>
+                    <option value="L">L</option>
+                    <option value="XL">XL</option>
+                </select>
+                <label for="cantidad">Cantidad:</label>
+                <button class="bg-brandNav text-white px-4 py-2 rounded hover:bg-brandBlue" onclick="window.location.href='./confirmar_compra.html'">Confirmar Compra</button>
+                <button class="bg-brandBlue text-white px-4 py-2 rounded hover:bg-brandNav" onclick="window.location.href='./añadiralcarrito.html'">Añadir al Carrito</button>
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-brandBlue text-white text-center py-4">
+        <p>&copy; 2024 JJ Indumentaria Masculina. Todos los derechos reservados.</p>
+        <p><a href="privacidad.html" class="underline">Política de Privacidad</a> | <a href="terminos.html" class="underline">Términos de Servicio</a></p>
+    </footer>
+
+</body>
+</html>

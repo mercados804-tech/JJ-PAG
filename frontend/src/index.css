@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/* Definición de colores de marca para Tailwind v4 */
+@theme {
+  --color-brandBlue: #003366;
+  --color-brandNav: #00509e;
+  --color-brandHeader: #4F8CC9;
+}
+
+/* Fuente y color por defecto */
+html, body, #root {
+  height: 100%;
+}
+body {
+  @apply m-0 font-sans text-gray-800 bg-blue-50;
+}
+
+/* Animación de carrusel infinito (marquee) */
+@keyframes marquee-left {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.marquee-track {
+  display: inline-flex;
+  will-change: transform;
+  animation-name: marquee-left;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* Animaciones para Notificaciones */
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-bounce-in {
+  animation: slide-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
