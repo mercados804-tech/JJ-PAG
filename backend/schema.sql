@@ -118,6 +118,16 @@ CREATE TABLE IF NOT EXISTS `orders` (
 -- Columnas adicionales para compatibilidad con el backend (idempotente: errores se ignoran en ensureSchema)
 ALTER TABLE `orders` ADD COLUMN `total` INT NOT NULL DEFAULT 0;
 ALTER TABLE `orders` ADD COLUMN `payment_method` VARCHAR(50) NULL;
+ALTER TABLE `orders` ADD COLUMN `customer_email` VARCHAR(255) NULL;
+ALTER TABLE `orders` ADD COLUMN `customer_name` VARCHAR(255) NULL;
+ALTER TABLE `orders` ADD COLUMN `customer_lastname` VARCHAR(255) NULL;
+ALTER TABLE `orders` ADD COLUMN `shipping_recipient` VARCHAR(255) NULL;
+ALTER TABLE `orders` ADD COLUMN `shipping_address` VARCHAR(255) NULL;
+ALTER TABLE `orders` ADD COLUMN `shipping_province` VARCHAR(255) NULL;
+ALTER TABLE `orders` ADD COLUMN `shipping_postal_code` VARCHAR(20) NULL;
+ALTER TABLE `orders` ADD COLUMN `shipping_phone` VARCHAR(50) NULL;
+ALTER TABLE `orders` ADD COLUMN `shipping_carrier` VARCHAR(100) NULL;
+ALTER TABLE `orders` ADD COLUMN `shipping_tracking` VARCHAR(100) NULL;
 
 -- Tabla: order_items (items de pedido)
 CREATE TABLE IF NOT EXISTS `order_items` (

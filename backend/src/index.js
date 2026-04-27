@@ -59,6 +59,18 @@ function getOrderStatusLabel(status) {
   return s || 'Actualizado';
 }
 
+function isEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function splitName(fullName) {
+  const t = String(fullName || '').trim().replace(/\s+/g, ' ');
+  if (!t) return { name: '', lastName: '' };
+  const parts = t.split(' ').filter(Boolean);
+  if (parts.length === 1) return { name: parts[0], lastName: '' };
+  return { name: parts.slice(0, -1).join(' '), lastName: parts[parts.length - 1] };
+}
+
 function generateOrderStatusEmailHtml({ orderId, newStatus, oldStatus, frontendUrl }) {
   const labelNew = getOrderStatusLabel(newStatus);
   const labelOld = oldStatus ? getOrderStatusLabel(oldStatus) : null;
@@ -1717,17 +1729,25 @@ app.post('/api/orders/confirm', async (req, res) => {
   const orderId = (memory.orders.length ? memory.orders[memory.orders.length - 1].id + 1 : 1);
   const shipCost = Number(summary?.shipping?.cost) || 0;
   const total = items.reduce((acc, it) => acc + (it.price || 0) * (it.quantity || 1), 0) + shipCost;
+  const customerEmail = String(summary?.email || '').trim().toLowerCase();
+  const recipient = String(summary?.recipient || summary?.name || '').trim();
+  const { name: customerName, lastName: customerLastName } = splitName(recipient);
 
   const order = {
     id: orderId,
     customer: userId,
+    customerEmail: isEmail(customerEmail) ? customerEmail : (isEmail(userId) ? userId : ''),
+    customerName,
+    customerLastName,
     items: items.map(it => ({ id: it.id, name: it.name, qty: it.quantity || 1, price: it.price || 0 })),
     status: 'pendiente',
     ts: new Date().toISOString(),
     shipping: {
+      recipient,
       address: summary?.address || 'RETIRO EN LOCAL',
       province: summary?.province || '',
       postalCode: summary?.postalCode || '',
+      phone: summary?.phone || '',
       cost: shipCost,
     },
     total,
@@ -1738,7 +1758,23 @@ app.post('/api/orders/confirm', async (req, res) => {
 
   // Intentar guardar en DB si existe
   try {
-    const r = await db.query('INSERT INTO orders (customer, status, total, payment_method) VALUES (?, ?, ?, ?)', [userId, 'pendiente', total, summary?.paymentMethod || 'Manual']);
+    const r = await db.query(
+      'INSERT INTO orders (customer, status, total, payment_method, customer_email, customer_name, customer_lastname, shipping_recipient, shipping_address, shipping_province, shipping_postal_code, shipping_phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        userId,
+        'pendiente',
+        total,
+        summary?.paymentMethod || 'Manual',
+        isEmail(customerEmail) ? customerEmail : (isEmail(userId) ? userId : null),
+        customerName || null,
+        customerLastName || null,
+        recipient || null,
+        summary?.address || 'RETIRO EN LOCAL',
+        summary?.province || null,
+        summary?.postalCode || null,
+        summary?.phone || null,
+      ]
+    );
     const dbOrderId = r.insertId;
     if (dbOrderId) {
       for (const it of items) {
@@ -1752,8 +1788,9 @@ app.post('/api/orders/confirm', async (req, res) => {
 
   // Enviar correo de confirmación (SIN await para no colgar la respuesta)
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const toEmail = order.customerEmail || (isEmail(userId) ? userId : '');
   sendEmail({
-    to: userId,
+    to: toEmail,
     subject: `¡Confirmación de pedido #${orderId}! - JJ Indumentaria`,
     html: generateOrderEmailHtml(order, frontendUrl),
   }).catch(e => console.error('Error enviando email en pedido:', e.message));
@@ -1774,28 +1811,64 @@ app.post('/api/shipping/correo-argentino/quote', (req, res) => {
   res.json({ ok: true, carrier: 'Correo Argentino', service: 'Domicilio', eta_days: eta, cost });
 });
 
-app.post('/api/shipping/correo-argentino/create-shipment', (req, res) => {
+app.post('/api/shipping/correo-argentino/create-shipment', async (req, res) => {
   const { orderId, address, postalCode, province, recipient } = req.body || {};
   if (!orderId || !address || !postalCode || !province || !recipient) return res.status(400).json({ ok: false, error: 'Datos de envío inválidos' });
-  const o = memory.orders.find(oo => oo.id === Number(orderId));
-  if (!o) return res.status(404).json({ ok: false, error: 'Pedido no encontrado' });
   const tracking = `CA${Date.now()}`;
-  o.shipping = { ...(o.shipping || {}), address, postalCode, province, recipient, carrier: 'Correo Argentino', tracking };
-  o.status = (o.status === 'preparando') ? 'enviado' : o.status;
+  let updated = false;
+  try {
+    const r = await db.query(
+      'UPDATE orders SET shipping_recipient = ?, shipping_address = ?, shipping_province = ?, shipping_postal_code = ?, shipping_carrier = ?, shipping_tracking = ? WHERE id = ?',
+      [recipient, address, province, postalCode, 'Correo Argentino', tracking, Number(orderId)]
+    );
+    if (r.affectedRows && r.affectedRows > 0) updated = true;
+  } catch (err) {
+    void 0;
+  }
+  const o = memory.orders.find(oo => oo.id === Number(orderId));
+  if (o) {
+    o.shipping = { ...(o.shipping || {}), address, postalCode, province, recipient, carrier: 'Correo Argentino', tracking };
+    o.status = (o.status === 'preparando') ? 'enviado' : o.status;
+    updated = true;
+  }
+  if (!updated) return res.status(404).json({ ok: false, error: 'Pedido no encontrado' });
   res.json({ ok: true, tracking });
 });
 
 // --- Admin: Pedidos ---
 app.get('/api/admin/orders', requireSalesAccess, async (req, res) => {
   try {
-    const ordersRes = await db.query('SELECT id, customer, status, created_at, updated_at FROM orders ORDER BY id DESC');
+    const ordersRes = await db.query(
+      'SELECT id, customer, customer_email, customer_name, customer_lastname, status, total, payment_method, shipping_recipient, shipping_address, shipping_province, shipping_postal_code, shipping_phone, shipping_carrier, shipping_tracking, created_at, updated_at FROM orders ORDER BY id DESC'
+    );
     const ordersRows = Array.isArray(ordersRes.rows) ? ordersRes.rows : [];
     if (ordersRows.length) {
       const ids = ordersRows.map(o => o.id);
       const placeholders = ids.map(() => '?').join(',');
       const itemsRes = await db.query(`SELECT id, order_id, product_id, name, qty, price FROM order_items WHERE order_id IN (${placeholders})`, ids);
       const items = Array.isArray(itemsRes.rows) ? itemsRes.rows : [];
-      const grouped = ordersRows.map(o => ({ ...o, items: items.filter(it => it.order_id === o.id) }));
+      const grouped = ordersRows.map(o => ({
+        id: o.id,
+        customer: o.customer,
+        customerEmail: o.customer_email || (isEmail(o.customer) ? o.customer : ''),
+        customerName: o.customer_name || '',
+        customerLastName: o.customer_lastname || '',
+        status: o.status,
+        total: typeof o.total === 'number' ? o.total : Number(o.total) || 0,
+        paymentMethod: o.payment_method || null,
+        created_at: o.created_at,
+        updated_at: o.updated_at,
+        shipping: {
+          recipient: o.shipping_recipient || '',
+          address: o.shipping_address || '',
+          province: o.shipping_province || '',
+          postalCode: o.shipping_postal_code || '',
+          phone: o.shipping_phone || '',
+          carrier: o.shipping_carrier || '',
+          tracking: o.shipping_tracking || '',
+        },
+        items: items.filter(it => it.order_id === o.id),
+      }));
       return res.json(grouped);
     }
   } catch (err) {
@@ -1838,13 +1911,14 @@ app.put('/api/admin/orders/:id/status', requireSalesAccess, async (req, res) => 
   if (Number.isNaN(id) || !allowed.has(status)) {
     return res.status(400).json({ ok: false, error: 'Datos inválidos' });
   }
-  const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
   try {
-    const curRes = await db.query('SELECT id, customer, status FROM orders WHERE id = ? LIMIT 1', [id]);
+    const curRes = await db.query('SELECT id, customer, customer_email, status FROM orders WHERE id = ? LIMIT 1', [id]);
     const curRow = Array.isArray(curRes.rows) ? curRes.rows[0] : null;
     if (!curRow) return res.status(404).json({ ok: false, error: 'Pedido no encontrado' });
     const oldStatus = String(curRow.status || '').toLowerCase();
     const customer = String(curRow.customer || '').trim();
+    const customerEmail = String(curRow.customer_email || '').trim().toLowerCase();
+    const toEmail = isEmail(customerEmail) ? customerEmail : (isEmail(customer) ? customer : '');
 
     if (oldStatus === String(status).toLowerCase()) {
       return res.json({ ok: true, unchanged: true });
@@ -1852,10 +1926,10 @@ app.put('/api/admin/orders/:id/status', requireSalesAccess, async (req, res) => 
 
     const r = await db.query('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
     if (r.affectedRows && r.affectedRows > 0) {
-      if (isEmail(customer)) {
+      if (toEmail) {
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
         sendEmail({
-          to: customer,
+          to: toEmail,
           subject: `Actualización de pedido #${id} - ${getOrderStatusLabel(status)}`,
           html: generateOrderStatusEmailHtml({ orderId: id, newStatus: status, oldStatus, frontendUrl }),
         }).catch(() => void 0);
@@ -1872,10 +1946,12 @@ app.put('/api/admin/orders/:id/status', requireSalesAccess, async (req, res) => 
     }
     memory.orders[idx].status = status;
     const customer = String(memory.orders[idx].customer || '').trim();
-    if (isEmail(customer)) {
+    const customerEmail = String(memory.orders[idx].customerEmail || memory.orders[idx].customer_email || '').trim().toLowerCase();
+    const toEmail = isEmail(customerEmail) ? customerEmail : (isEmail(customer) ? customer : '');
+    if (toEmail) {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
       sendEmail({
-        to: customer,
+        to: toEmail,
         subject: `Actualización de pedido #${id} - ${getOrderStatusLabel(status)}`,
         html: generateOrderStatusEmailHtml({ orderId: id, newStatus: status, oldStatus, frontendUrl }),
       }).catch(() => void 0);

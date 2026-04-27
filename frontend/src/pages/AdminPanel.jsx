@@ -3614,16 +3614,38 @@ export default function AdminPanel() {
               {orders.length===0 && <p className="text-gray-600">Sin pedidos registrados.</p>}
               <div className="space-y-3">
                 {orders.map(o=> (
-                  <div key={o.id} className="border border-gray-300 rounded p-3">
-                    <div className="flex justify-between">
-                      <div>
-                        <div className="font-semibold">Pedido #{o.id} · Cliente: {o.customer}</div>
-                        <div className="text-sm text-gray-600">{o.items.map(i=> `${i.name} x${i.qty}`).join(', ')}</div>
+                  <div key={o.id} className="border border-gray-300 rounded p-4">
+                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-slate-900">Pedido #{o.id}</div>
+                        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                          <div className="min-w-0">
+                            <span className="text-gray-500">Nombre:</span>{' '}
+                            <span className="text-slate-900 font-medium">{o.customerName || o.shipping?.recipient || '—'}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-gray-500">Apellido:</span>{' '}
+                            <span className="text-slate-900 font-medium">{o.customerLastName || '—'}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-gray-500">Email:</span>{' '}
+                            <span className="text-slate-900 font-medium break-all">{o.customerEmail || o.customer || '—'}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-gray-500">Dirección:</span>{' '}
+                            <span className="text-slate-900 font-medium">
+                              {o.shipping?.address ? `${o.shipping.address}${o.shipping.province ? `, ${o.shipping.province}` : ''}${o.shipping.postalCode ? ` (${o.shipping.postalCode})` : ''}` : '—'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-2 text-sm text-gray-600">
+                          {o.items.map(i=> `${i.name} x${i.qty}`).join(', ')}
+                        </div>
                         {o.shipping?.tracking && (
-                          <div className="text-xs text-emerald-600 mt-1">Seguimiento: {o.shipping.tracking} ({o.shipping.carrier})</div>
+                          <div className="text-xs text-emerald-600 mt-1">Seguimiento: {o.shipping.tracking}{o.shipping.carrier ? ` (${o.shipping.carrier})` : ''}</div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         <span className="text-sm">Estado:</span>
                         <select defaultValue={o.status} onChange={e=>updateOrderStatus(o.id, e.target.value)} className="border border-gray-300 rounded p-1">
                           <option value="pendiente">Pendiente</option>
@@ -3634,11 +3656,11 @@ export default function AdminPanel() {
                         </select>
                       </div>
                     </div>
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3">
-                      <input value={shipmentForms[o.id]?.recipient || ''} onChange={e=>updateShipmentForm(o.id,'recipient',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Destinatario" />
-                      <input value={shipmentForms[o.id]?.address || ''} onChange={e=>updateShipmentForm(o.id,'address',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Dirección" />
-                      <input value={shipmentForms[o.id]?.province || ''} onChange={e=>updateShipmentForm(o.id,'province',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Provincia" />
-                      <input value={shipmentForms[o.id]?.postalCode || ''} onChange={e=>updateShipmentForm(o.id,'postalCode',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Código Postal" />
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].recipient != null) ? shipmentForms[o.id].recipient : (o.shipping?.recipient || '')} onChange={e=>updateShipmentForm(o.id,'recipient',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Destinatario" />
+                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].address != null) ? shipmentForms[o.id].address : (o.shipping?.address || '')} onChange={e=>updateShipmentForm(o.id,'address',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Dirección" />
+                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].province != null) ? shipmentForms[o.id].province : (o.shipping?.province || '')} onChange={e=>updateShipmentForm(o.id,'province',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Provincia" />
+                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].postalCode != null) ? shipmentForms[o.id].postalCode : (o.shipping?.postalCode || '')} onChange={e=>updateShipmentForm(o.id,'postalCode',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Código Postal" />
                       <button className="px-3 py-2 bg-brandNav text-white rounded" onClick={()=>createShipmentForOrder(o.id)}>Generar Envío</button>
                     </div>
                   </div>
