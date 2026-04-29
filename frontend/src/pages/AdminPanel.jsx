@@ -1959,15 +1959,13 @@ export default function AdminPanel() {
   }
 
   const lowStockCount = products.filter(p => (p.quantity ?? 0) <= 2).length
-  const backendProductMap = new Map(products.map((p) => [Number(p.id), p]))
-  const sellerProductsCatalog = publicProductTemplates.map((tpl) => {
-    const backend = backendProductMap.get(Number(tpl.id))
+  const sellerProductsCatalog = products.map((p) => {
+    const tpl = getPublicProductTemplate(p)
     return {
-      ...(backend || {}),
-      ...tpl,
-      id: tpl.id,
-      image: tpl.image,
-      quantity: backend?.quantity ?? tpl.quantity ?? 0,
+      ...p,
+      image: tpl?.image || p?.image || '',
+      name: p?.name || tpl?.name || '',
+      quantity: p?.quantity ?? 0,
     }
   })
   const productCardsCatalog = isSeller ? sellerProductsCatalog : products
