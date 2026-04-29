@@ -880,9 +880,9 @@ async function listAdminPromotions() {
       }),
       product_name: row.product_name || null,
     }));
-    return dbPromos.length ? dbPromos : memoryPromos;
+    return dbPromos;
   } catch (err) {
-    return memoryPromos;
+    return [];
   }
 }
 
@@ -1175,11 +1175,12 @@ app.get('/api/admin/products', requireProductsView, async (req, res) => {
       ORDER BY p.id
     `);
     const rows = result.rows && result.rows.length ? result.rows : [];
-    const extra = Array.isArray(memory.products) ? memory.products : [];
-    const combined = mergeProductsById([extra, rows]);
-    res.json(combined);
+    res.json(rows);
   } catch (err) {
-    res.json(mergeProductsById([Array.isArray(memory.products) ? memory.products : []]));
+    if (!DB_ENABLED) {
+      return res.json(mergeProductsById([Array.isArray(memory.products) ? memory.products : []]));
+    }
+    res.status(500).json({ ok: false, error: 'DB no disponible' });
   }
 });
 
@@ -2296,11 +2297,14 @@ app.get('/api/admin/orders', requireOrdersAccess, async (req, res) => {
       }));
       return res.json(grouped);
     }
+    return res.json([]);
   } catch (err) {
-    // ignorar y usar memoria
+    if (!DB_ENABLED) {
+      normalizeMemoryOrdersItems();
+      return res.json(memory.orders);
+    }
   }
-  normalizeMemoryOrdersItems();
-  res.json(memory.orders);
+  res.status(500).json({ ok: false, error: 'DB no disponible' });
 });
 
 app.post('/api/admin/orders', requireSalesAccess, async (req, res) => {
@@ -2323,6 +2327,9 @@ app.post('/api/admin/orders', requireSalesAccess, async (req, res) => {
     memory.loyaltyFlags[uid].spinCredits = (Number(memory.loyaltyFlags[uid].spinCredits) || 0) + 1;
     return res.json({ ok: true, id: orderId });
   } catch (err) {
+    if (DB_ENABLED) {
+      return res.status(500).json({ ok: false, error: 'DB no disponible' });
+    }
     const id = (memory.orders.length ? memory.orders[memory.orders.length - 1].id + 1 : 1);
     const nextItemBaseId = (() => {
       const list = Array.isArray(memory.orders) ? memory.orders : [];
@@ -2637,6 +2644,9 @@ app.post('/api/admin/promotions', requirePromotionsAccess, async (req, res) => {
     safePersistState();
     res.json({ ok: true, id });
   } catch (err) {
+    if (DB_ENABLED) {
+      return res.status(500).json({ ok: false, error: 'DB no disponible' });
+    }
     const product = getMemoryProduct({ id: productIdNum });
     if (!product) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
     if ((Number(product.quantity) || 0) < promoStock) {
