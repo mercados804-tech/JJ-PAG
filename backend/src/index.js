@@ -284,6 +284,7 @@ app.get('/api/health', async (req, res) => {
     dbEnabled: DB_ENABLED,
     dbOk,
     dbError,
+    dbTarget: db?.dbMeta ? { mode: db.dbMeta.mode, host: db.dbMeta.host, port: db.dbMeta.port, database: db.dbMeta.database } : null,
     smtpConfigured: !SMTP_PLACEHOLDER,
     resendConfigured: Boolean(RESEND_API_KEY && RESEND_FROM),
     smtpHost: SMTP_HOST,

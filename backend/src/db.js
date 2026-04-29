@@ -6,8 +6,16 @@ dotenv.config();
 
 const connectionString = String(process.env.DATABASE_URL || '').trim() || null; // ej: mysql://user:pass@127.0.0.1:3306/jj-indum
 
+const dbMeta = {
+  mode: null,
+  host: null,
+  port: null,
+  database: null,
+};
+
 let pool = null;
 if (connectionString) {
+  dbMeta.mode = 'url';
   const sslFlag = String(process.env.MYSQL_SSL || process.env.DATABASE_SSL || process.env.DB_SSL || '').trim().toLowerCase();
   const sslEnabled = ['1', 'true', 'yes', 'on'].includes(sslFlag);
   const rejectFlag = String(process.env.MYSQL_SSL_REJECT_UNAUTHORIZED || '').trim().toLowerCase();
@@ -19,6 +27,9 @@ if (connectionString) {
     } else {
     const port = u.port ? Number(u.port) : 3306;
     const database = (u.pathname || '').replace(/^\//, '') || undefined;
+    dbMeta.host = u.hostname || null;
+    dbMeta.port = port || 3306;
+    dbMeta.database = database || null;
     pool = mysql.createPool({
       host: u.hostname,
       port,
@@ -43,6 +54,10 @@ if (connectionString) {
   const password = process.env.MYSQL_PASSWORD;
   const database = process.env.MYSQL_DATABASE;
   if (host && user && database) {
+    dbMeta.mode = 'params';
+    dbMeta.host = host;
+    dbMeta.port = port || 3306;
+    dbMeta.database = database;
     pool = mysql.createPool({
       host,
       port: port || 3306,
@@ -142,4 +157,4 @@ async function ensureSchema() {
   }
 }
 
-module.exports = { query, ensureSchema };
+module.exports = { query, ensureSchema, dbMeta };
