@@ -14,6 +14,9 @@ if (connectionString) {
   const rejectUnauthorized = !['0', 'false', 'no', 'off'].includes(rejectFlag);
   try {
     const u = new URL(connectionString);
+    if (String(u.protocol || '').toLowerCase() !== 'mysql:') {
+      pool = null;
+    } else {
     const port = u.port ? Number(u.port) : 3306;
     const database = (u.pathname || '').replace(/^\//, '') || undefined;
     pool = mysql.createPool({
@@ -28,6 +31,7 @@ if (connectionString) {
       connectionLimit: 10,
       queueLimit: 0,
     });
+    }
   } catch (err) {
     // mysql2 soporta URI directamente
     pool = mysql.createPool(connectionString);

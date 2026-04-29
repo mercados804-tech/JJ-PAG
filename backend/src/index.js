@@ -10,7 +10,7 @@ const crypto = require('crypto');
 dotenv.config();
 
 const DB_ENABLED = Boolean(
-  process.env.DATABASE_URL ||
+  (process.env.DATABASE_URL && /^mysql:\/\//i.test(String(process.env.DATABASE_URL).trim())) ||
   (process.env.MYSQL_HOST && process.env.MYSQL_USER && process.env.MYSQL_DATABASE)
 );
 
