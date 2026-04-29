@@ -4,10 +4,22 @@ const fs = require('fs');
 const path = require('path');
 dotenv.config();
 
-const connectionString = String(process.env.DATABASE_URL || '').trim() || null; // ej: mysql://user:pass@127.0.0.1:3306/jj-indum
+function resolveEnvRef(value) {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  const m1 = v.match(/^\$(\w+)$/);
+  if (m1) return String(process.env[m1[1]] || '').trim();
+  const m2 = v.match(/^\$\{(\w+)\}$/);
+  if (m2) return String(process.env[m2[1]] || '').trim();
+  return v;
+}
+
+const rawConnectionString = process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || '';
+const connectionString = resolveEnvRef(rawConnectionString) || null;
 
 const dbMeta = {
   mode: null,
+  source: null,
   host: null,
   port: null,
   database: null,
@@ -16,6 +28,7 @@ const dbMeta = {
 let pool = null;
 if (connectionString) {
   dbMeta.mode = 'url';
+  dbMeta.source = process.env.DATABASE_URL ? 'DATABASE_URL' : (process.env.MYSQL_URL ? 'MYSQL_URL' : (process.env.MYSQL_PUBLIC_URL ? 'MYSQL_PUBLIC_URL' : null));
   const sslFlag = String(process.env.MYSQL_SSL || process.env.DATABASE_SSL || process.env.DB_SSL || '').trim().toLowerCase();
   const sslEnabled = ['1', 'true', 'yes', 'on'].includes(sslFlag);
   const rejectFlag = String(process.env.MYSQL_SSL_REJECT_UNAUTHORIZED || '').trim().toLowerCase();
@@ -55,6 +68,7 @@ if (connectionString) {
   const database = process.env.MYSQL_DATABASE;
   if (host && user && database) {
     dbMeta.mode = 'params';
+    dbMeta.source = 'MYSQL_*';
     dbMeta.host = host;
     dbMeta.port = port || 3306;
     dbMeta.database = database;

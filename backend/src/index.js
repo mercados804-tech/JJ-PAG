@@ -9,8 +9,20 @@ const crypto = require('crypto');
 
 dotenv.config();
 
+function resolveEnvRef(value) {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  const m1 = v.match(/^\$(\w+)$/);
+  if (m1) return String(process.env[m1[1]] || '').trim();
+  const m2 = v.match(/^\$\{(\w+)\}$/);
+  if (m2) return String(process.env[m2[1]] || '').trim();
+  return v;
+}
+
+const RAW_DB_URL = process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || '';
+const DB_URL = resolveEnvRef(RAW_DB_URL);
 const DB_ENABLED = Boolean(
-  (process.env.DATABASE_URL && /^mysql:\/\//i.test(String(process.env.DATABASE_URL).trim())) ||
+  (DB_URL && /^mysql:\/\//i.test(DB_URL)) ||
   (process.env.MYSQL_HOST && process.env.MYSQL_USER && process.env.MYSQL_DATABASE)
 );
 
@@ -284,7 +296,7 @@ app.get('/api/health', async (req, res) => {
     dbEnabled: DB_ENABLED,
     dbOk,
     dbError,
-    dbTarget: db?.dbMeta ? { mode: db.dbMeta.mode, host: db.dbMeta.host, port: db.dbMeta.port, database: db.dbMeta.database } : null,
+    dbTarget: db?.dbMeta ? { mode: db.dbMeta.mode, source: db.dbMeta.source || null, host: db.dbMeta.host, port: db.dbMeta.port, database: db.dbMeta.database } : null,
     smtpConfigured: !SMTP_PLACEHOLDER,
     resendConfigured: Boolean(RESEND_API_KEY && RESEND_FROM),
     smtpHost: SMTP_HOST,
