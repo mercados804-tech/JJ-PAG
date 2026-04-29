@@ -1854,7 +1854,11 @@ export default function AdminPanel() {
     try {
       const resp = await fetch(apiUrl('/api/admin/promotions'), { method:'POST', headers:{ 'Content-Type':'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) })
       const data = await resp.json()
-      if (!resp.ok || !data.ok) { notify(data.error || 'Error al crear promoción', 'error'); return }
+      if (!resp.ok || !data.ok) {
+        const extra = (data && data.available != null) ? ` (Stock actual: ${Number(data.available) || 0})` : ''
+        notify((data?.error || 'Error al crear promoción') + extra, 'error')
+        return
+      }
       await Promise.all([refreshPromotions(), refreshProducts()])
       clearPromotionDraft()
       notify('Promoción creada', 'success')

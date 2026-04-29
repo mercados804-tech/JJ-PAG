@@ -2619,7 +2619,13 @@ app.post('/api/admin/promotions', requirePromotionsAccess, async (req, res) => {
     const product = Array.isArray(productRes.rows) ? productRes.rows[0] : null;
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
     if ((Number(product.quantity) || 0) < promoStock) {
-      return res.status(400).json({ ok: false, error: 'No hay stock general suficiente para reservar la promoción' });
+      return res.status(400).json({
+        ok: false,
+        error: 'No hay stock general suficiente para reservar la promoción',
+        available: Number(product.quantity) || 0,
+        productId: Number(product.id) || productIdNum,
+        productName: product.name || null,
+      });
     }
     await db.query('UPDATE products SET quantity = quantity - ? WHERE id = ?', [promoStock, productIdNum]);
     const result = await db.query(
@@ -2650,7 +2656,13 @@ app.post('/api/admin/promotions', requirePromotionsAccess, async (req, res) => {
     const product = getMemoryProduct({ id: productIdNum });
     if (!product) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
     if ((Number(product.quantity) || 0) < promoStock) {
-      return res.status(400).json({ ok: false, error: 'No hay stock general suficiente para reservar la promoción' });
+      return res.status(400).json({
+        ok: false,
+        error: 'No hay stock general suficiente para reservar la promoción',
+        available: Number(product.quantity) || 0,
+        productId: productIdNum,
+        productName: product.name || null,
+      });
     }
     product.quantity = Math.max((Number(product.quantity) || 0) - promoStock, 0);
     const id = (memory.promotions.length ? memory.promotions[memory.promotions.length - 1].id + 1 : 1);
