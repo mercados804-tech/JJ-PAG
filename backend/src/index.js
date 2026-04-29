@@ -722,7 +722,54 @@ function getMemoryProduct(selector) {
   }
   const byName = String(productName || '').trim().toLowerCase();
   if (!byName) return null;
-  return memory.products.find(p => String(p.name || '').trim().toLowerCase() === byName) || null;
+  const exact = memory.products.find(p => String(p.name || '').trim().toLowerCase() === byName) || null;
+  if (exact) return exact;
+  if (byName.length < 3) return null;
+  const candidates = memory.products.filter(p => String(p.name || '').trim().toLowerCase().includes(byName));
+  if (candidates.length === 1) return candidates[0];
+  return null;
+}
+
+function normalizeMemoryOrdersItems() {
+  const orders = Array.isArray(memory.orders) ? memory.orders : [];
+  const products = Array.isArray(memory.products) ? memory.products : [];
+  const productIdSet = new Set(products.map(p => Number(p?.id)).filter(Number.isFinite));
+  let maxItemId = 0;
+  for (const o of orders) {
+    const items = Array.isArray(o?.items) ? o.items : [];
+    for (const it of items) {
+      maxItemId = Math.max(maxItemId, Number(it?.id) || 0);
+    }
+  }
+  maxItemId = Math.max(1000000, maxItemId);
+  for (const o of orders) {
+    const items = Array.isArray(o?.items) ? o.items : [];
+    const used = new Set();
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] || {};
+      const currentId = Number(it.id);
+      const existingProductId = Number(it.product_id ?? it.productId);
+      const hasExistingProductId = Number.isFinite(existingProductId);
+      let inferredProductId = hasExistingProductId ? existingProductId : null;
+      if (!hasExistingProductId && Number.isFinite(currentId) && productIdSet.has(currentId)) {
+        inferredProductId = currentId;
+      }
+      const needsNewId = !Number.isFinite(currentId) || used.has(currentId) || (inferredProductId != null && currentId === inferredProductId);
+      const nextId = needsNewId ? (++maxItemId) : currentId;
+      used.add(nextId);
+      items[i] = {
+        ...it,
+        id: nextId,
+        ...(inferredProductId != null ? { product_id: inferredProductId } : {}),
+        name: it.name || '',
+        qty: Number(it.qty ?? it.quantity ?? 0) || 0,
+        price: Number(it.price ?? 0) || 0,
+        color: it.color || '',
+        talle: it.talle || '',
+      };
+    }
+    o.items = items;
+  }
 }
 
 function isProductLikeRecord(item) {
@@ -1312,7 +1359,7 @@ app.post('/api/admin/returns', requireInventoryAccess, async (req, res) => {
     }
     const resolvedId = resolved ? Number.parseInt(resolved.id, 10) : NaN;
     const productRow = Number.isFinite(resolvedId) ? resolved : null;
-    if (!productRow) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
+    if (!productRow) throw new Error('PRODUCT_NOT_FOUND');
 
     await db.query('UPDATE products SET quantity = quantity + ? WHERE id = ?', [q, resolvedId]);
     const ins = await db.query(
@@ -1407,13 +1454,26 @@ app.post('/api/admin/order-returns', requireSalesAccess, async (req, res) => {
   }
 
   try {
-    const itemRes = await db.query(
-      'SELECT id, order_id, product_id, name, qty, color, talle FROM order_items WHERE id = ? LIMIT 1',
-      [orderItemId]
-    );
-    const item = Array.isArray(itemRes.rows) ? itemRes.rows[0] : null;
+    const itemRes = await db.query('SELECT id, order_id, product_id, name, qty, color, talle FROM order_items WHERE id = ? LIMIT 1', [orderItemId]);
+    let item = Array.isArray(itemRes.rows) ? itemRes.rows[0] : null;
+    if (!item) {
+      const byProductRes = await db.query(
+        'SELECT id, order_id, product_id, name, qty, color, talle FROM order_items WHERE order_id = ? AND product_id = ? ORDER BY id ASC LIMIT 2',
+        [orderId, orderItemId]
+      );
+      const candidates = Array.isArray(byProductRes.rows) ? byProductRes.rows : [];
+      if (candidates.length === 1) {
+        item = candidates[0];
+      } else if (candidates.length > 1) {
+        return res.status(409).json({
+          ok: false,
+          error: 'Hay más de un item del mismo producto en el pedido. Elegí el item exacto.',
+          matches: candidates.map((c) => ({ id: c.id, name: c.name, color: c.color, talle: c.talle, qty: c.qty })),
+        });
+      }
+    }
     if (!item || Number(item.order_id) !== orderId) {
-      return res.status(404).json({ ok: false, error: 'Item de pedido no encontrado' });
+      throw new Error('ORDER_ITEM_NOT_FOUND');
     }
     const maxQty = Number(item.qty) || 0;
     if (qty > maxQty) {
@@ -1439,9 +1499,21 @@ app.post('/api/admin/order-returns', requireSalesAccess, async (req, res) => {
     safePersistState();
     return res.json({ ok: true, id: ins.insertId || null });
   } catch (err) {
+    normalizeMemoryOrdersItems();
     const order = Array.isArray(memory.orders) ? memory.orders.find(o => Number(o?.id) === orderId) : null;
     const items = Array.isArray(order?.items) ? order.items : [];
-    const item = items.find(it => Number(it?.id) === orderItemId) || null;
+    let item = items.find(it => Number(it?.id) === orderItemId) || null;
+    if (!item) {
+      const candidates = items.filter(it => Number(it?.product_id ?? it?.productId) === orderItemId);
+      if (candidates.length === 1) item = candidates[0];
+      else if (candidates.length > 1) {
+        return res.status(409).json({
+          ok: false,
+          error: 'Hay más de un item del mismo producto en el pedido. Elegí el item exacto.',
+          matches: candidates.map((c) => ({ id: c.id, name: c.name, color: c.color, talle: c.talle, qty: c.qty })),
+        });
+      }
+    }
     if (!order || !item) return res.status(404).json({ ok: false, error: 'Item de pedido no encontrado' });
     const maxQty = Number(item.qty ?? item.quantity ?? 0) || 0;
     if (qty > maxQty) {
@@ -1576,7 +1648,7 @@ app.post('/api/admin/sales', requireSalesAccess, async (req, res) => {
     } else {
       return res.status(400).json({ ok: false, error: 'Falta productId o productName' });
     }
-    if (!product) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
+    if (!product) throw new Error('PRODUCT_NOT_FOUND');
 
     let activePromo = null;
     try {
@@ -2227,6 +2299,7 @@ app.get('/api/admin/orders', requireOrdersAccess, async (req, res) => {
   } catch (err) {
     // ignorar y usar memoria
   }
+  normalizeMemoryOrdersItems();
   res.json(memory.orders);
 });
 
@@ -2251,7 +2324,27 @@ app.post('/api/admin/orders', requireSalesAccess, async (req, res) => {
     return res.json({ ok: true, id: orderId });
   } catch (err) {
     const id = (memory.orders.length ? memory.orders[memory.orders.length - 1].id + 1 : 1);
-    const order = { id, customer, items, status: 'pendiente', ts: new Date().toISOString() };
+    const nextItemBaseId = (() => {
+      const list = Array.isArray(memory.orders) ? memory.orders : [];
+      let max = 0;
+      for (const order of list) {
+        const its = Array.isArray(order?.items) ? order.items : [];
+        for (const it of its) {
+          max = Math.max(max, Number(it?.id) || 0);
+        }
+      }
+      return Math.max(1000000, max + 1);
+    })();
+    const normalizedItems = items.map((it, idx) => ({
+      id: nextItemBaseId + idx,
+      product_id: it?.id ?? it?.product_id ?? it?.productId ?? null,
+      name: it?.name || '',
+      qty: Number(it?.qty) || 0,
+      price: Number(it?.price) || 0,
+      color: it?.color || '',
+      talle: it?.talle || '',
+    }));
+    const order = { id, customer, items: normalizedItems, status: 'pendiente', ts: new Date().toISOString() };
     memory.orders.push(order);
     const uid = (customer || 'guest').toLowerCase();
     memory.loyaltyFlags[uid] = memory.loyaltyFlags[uid] || { profileCompleted: false, lastSpinDate: null, spinCredits: 0 };
@@ -2517,7 +2610,7 @@ app.post('/api/admin/promotions', requirePromotionsAccess, async (req, res) => {
   try {
     const productRes = await db.query('SELECT id, name, price, image, quantity FROM products WHERE id = ? LIMIT 1', [productIdNum]);
     const product = Array.isArray(productRes.rows) ? productRes.rows[0] : null;
-    if (!product) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
+    if (!product) throw new Error('PRODUCT_NOT_FOUND');
     if ((Number(product.quantity) || 0) < promoStock) {
       return res.status(400).json({ ok: false, error: 'No hay stock general suficiente para reservar la promoción' });
     }
