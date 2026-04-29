@@ -21,6 +21,8 @@ const SMTP_PORT = parseInt(String(process.env.SMTP_PORT || '587').trim(), 10);
 const SMTP_SECURE = String(process.env.SMTP_PORT || '').trim() === '465';
 const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER).trim();
 const SMTP_PLACEHOLDER = (SMTP_USER === 'your-email@gmail.com' || !SMTP_USER || !SMTP_PASS);
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || '').trim();
+const RESEND_FROM = String(process.env.RESEND_FROM || '').trim();
 
 // Configuración de nodemailer
 const transporter = nodemailer.createTransport({
@@ -45,8 +47,55 @@ function withTimeout(promise, ms) {
   ]);
 }
 
+async function sendEmailViaResend({ to, subject, html }) {
+  try {
+    if (!RESEND_API_KEY || !RESEND_FROM) return false;
+    memory.smtp = memory.smtp || {};
+    memory.smtp.lastAttemptAt = new Date().toISOString();
+    memory.smtp.lastProvider = 'resend';
+    const r = await withTimeout(
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: RESEND_FROM,
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html,
+        }),
+      }),
+      parseInt(String(process.env.RESEND_SEND_TIMEOUT || '4000'), 10)
+    );
+    if (r && r.__timeout) {
+      memory.smtp.lastError = 'Resend: timeout';
+      memory.smtp.lastErrorAt = new Date().toISOString();
+      return false;
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      memory.smtp.lastError = `Resend: ${r.status} ${txt}`.slice(0, 500);
+      memory.smtp.lastErrorAt = new Date().toISOString();
+      return false;
+    }
+    memory.smtp.lastOkAt = new Date().toISOString();
+    memory.smtp.lastError = null;
+    return true;
+  } catch (err) {
+    memory.smtp = memory.smtp || {};
+    memory.smtp.lastProvider = 'resend';
+    memory.smtp.lastError = `Resend: ${String(err?.message || err)}`.slice(0, 500);
+    memory.smtp.lastErrorAt = new Date().toISOString();
+    return false;
+  }
+}
+
 async function sendEmail({ to, subject, html }) {
   try {
+    const resendOk = await sendEmailViaResend({ to, subject, html });
+    if (resendOk) return true;
     if (SMTP_PLACEHOLDER) {
       console.warn('⚠️ SMTP no configurado: faltan SMTP_USER/SMTP_PASS (o SMTP_PASSWORD).');
       console.log(`SIMULACIÓN DE ENVÍO A ${to}: [${subject}]`);
@@ -54,6 +103,7 @@ async function sendEmail({ to, subject, html }) {
     }
     memory.smtp = memory.smtp || {};
     memory.smtp.lastAttemptAt = new Date().toISOString();
+    memory.smtp.lastProvider = 'smtp';
     const info = await transporter.sendMail({
       from: `"${process.env.ADMIN_NAME || 'JJ Indumentaria'}" <${SMTP_FROM}>`,
       to,
@@ -235,10 +285,12 @@ app.get('/api/health', async (req, res) => {
     dbOk,
     dbError,
     smtpConfigured: !SMTP_PLACEHOLDER,
+    resendConfigured: Boolean(RESEND_API_KEY && RESEND_FROM),
     smtpHost: SMTP_HOST,
     smtpPort: SMTP_PORT,
     smtpUser: SMTP_USER ? `${SMTP_USER.slice(0, 3)}***${SMTP_USER.includes('@') ? '@' + SMTP_USER.split('@')[1] : ''}` : null,
     smtpFrom: SMTP_FROM || null,
+    mailProviderLast: memory.smtp?.lastProvider || null,
     smtpLastAttemptAt: memory.smtp?.lastAttemptAt || null,
     smtpLastOkAt: memory.smtp?.lastOkAt || null,
     smtpLastErrorAt: memory.smtp?.lastErrorAt || null,
