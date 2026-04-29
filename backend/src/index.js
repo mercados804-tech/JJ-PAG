@@ -14,29 +14,34 @@ const DB_ENABLED = Boolean(
   (process.env.MYSQL_HOST && process.env.MYSQL_USER && process.env.MYSQL_DATABASE)
 );
 
-const SMTP_PLACEHOLDER = (process.env.SMTP_USER === 'your-email@gmail.com' || !process.env.SMTP_USER);
+const SMTP_USER = String(process.env.SMTP_USER || '').trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || process.env.SMTP_PASSWORD || '').trim();
+const SMTP_HOST = String(process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+const SMTP_PORT = parseInt(String(process.env.SMTP_PORT || '587').trim(), 10);
+const SMTP_SECURE = String(process.env.SMTP_PORT || '').trim() === '465';
+const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER).trim();
+const SMTP_PLACEHOLDER = (SMTP_USER === 'your-email@gmail.com' || !SMTP_USER || !SMTP_PASS);
 
 // Configuración de nodemailer
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: (process.env.SMTP_PORT === '465'),
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SMTP_SECURE,
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    user: SMTP_USER,
+    pass: SMTP_PASS,
   },
 });
 
 async function sendEmail({ to, subject, html }) {
   try {
-    const isPlaceholder = (process.env.SMTP_USER === 'your-email@gmail.com' || !process.env.SMTP_USER);
-    if (isPlaceholder) {
-      console.warn('⚠️ CONFIGURACIÓN SMTP PENDIENTE: Los correos no se enviarán hasta que configures SMTP_USER y SMTP_PASS en el archivo .env del backend.');
+    if (SMTP_PLACEHOLDER) {
+      console.warn('⚠️ SMTP no configurado: faltan SMTP_USER/SMTP_PASS (o SMTP_PASSWORD).');
       console.log(`SIMULACIÓN DE ENVÍO A ${to}: [${subject}]`);
-      return true; // Retornamos true para no bloquear el flujo del frontend en desarrollo
+      return false;
     }
     const info = await transporter.sendMail({
-      from: `"${process.env.ADMIN_NAME || 'JJ Indumentaria'}" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+      from: `"${process.env.ADMIN_NAME || 'JJ Indumentaria'}" <${SMTP_FROM}>`,
       to,
       subject,
       html,
@@ -1090,7 +1095,7 @@ app.post('/api/auth/register', async (req, res) => {
       void 0;
     }
   }
-  sendEmail({
+  const mailOk = await sendEmail({
     to: userId,
     subject: 'Verifica tu cuenta - JJ Indumentaria',
     html: `
@@ -1104,9 +1109,14 @@ app.post('/api/auth/register', async (req, res) => {
         <p style="font-size: 12px; color: #666; margin-top: 30px;">Si no realizaste este registro, ignora este correo.</p>
       </div>
     `,
-  }).catch(e => console.error('Error background email:', e.message));
+  });
 
-  res.json({ ok: true, userId, message: 'Registro exitoso. Revisa tu email para verificar la cuenta.', ...(SMTP_PLACEHOLDER ? { devCode: code } : {}) });
+  res.json({
+    ok: true,
+    userId,
+    message: mailOk ? 'Registro exitoso. Revisa tu email para verificar la cuenta.' : 'Registro exitoso. No se pudo enviar el email, usá el código para verificar.',
+    ...(mailOk ? {} : { devCode: code }),
+  });
 });
 
 // Login
@@ -3472,8 +3482,7 @@ app.post('/api/auth/send-verification', async (req, res) => {
   if (!memory.auth.verificationCodes) memory.auth.verificationCodes = {};
   memory.auth.verificationCodes[emailNorm] = { code, exp: Date.now() + 30 * 60 * 1000 };
   
-  // No esperamos a que el email se envíe para responder al cliente
-  sendEmail({
+  const mailOk = await sendEmail({
     to: emailNorm,
     subject: 'Código de verificación - JJ Indumentaria',
     html: `
@@ -3487,9 +3496,13 @@ app.post('/api/auth/send-verification', async (req, res) => {
         <p style="font-size: 12px; color: #666; margin-top: 30px;">Si no solicitaste este código, puedes ignorar este correo.</p>
       </div>
     `,
-  }).catch(e => console.error('Error background resend:', e.message));
+  });
 
-  res.json({ ok: true, message: 'Código enviado correctamente (en proceso)', ...(SMTP_PLACEHOLDER ? { devCode: code } : {}) });
+  res.json({
+    ok: true,
+    message: mailOk ? 'Código enviado correctamente.' : 'No se pudo enviar el email. Usá el código para verificar.',
+    ...(mailOk ? {} : { devCode: code }),
+  });
 });
 
 // Verificar código
