@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 dotenv.config();
 
-const connectionString = process.env.DATABASE_URL; // ej: mysql://user:pass@127.0.0.1:3306/jj-indum
+const connectionString = String(process.env.DATABASE_URL || '').trim() || null; // ej: mysql://user:pass@127.0.0.1:3306/jj-indum
 
 let pool = null;
 if (connectionString) {
