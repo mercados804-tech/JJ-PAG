@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS `products` (
   `price` INT NOT NULL, -- precio en ARS (entero)
   `image` MEDIUMTEXT NOT NULL, -- imagen/preview en base64
   `category` VARCHAR(100) NULL,
+  `colors` VARCHAR(255) NOT NULL DEFAULT '',
+  `sizes` VARCHAR(255) NOT NULL DEFAULT '',
   `quantity` INT NOT NULL DEFAULT 0,
   `sold_count` INT NOT NULL DEFAULT 0, -- Total unidades vendidas
   `supplier_id` INT UNSIGNED NULL, -- Relación con proveedores
@@ -35,6 +37,9 @@ CREATE TABLE IF NOT EXISTS `products` (
   KEY `idx_products_category` (`category`),
   CONSTRAINT `fk_products_supplier` FOREIGN KEY (`supplier_id`) REFERENCES `suppliers` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+ALTER TABLE `products` ADD COLUMN `colors` VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE `products` ADD COLUMN `sizes` VARCHAR(255) NOT NULL DEFAULT '';
 
 -- Tabla: users (clientes)
 CREATE TABLE IF NOT EXISTS `users` (
@@ -88,10 +93,21 @@ CREATE TABLE IF NOT EXISTS `contact_messages` (
   `name` VARCHAR(255) NOT NULL,
   `email` VARCHAR(255) NOT NULL,
   `message` TEXT NOT NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+  `reply` TEXT NULL,
+  `replied_by_email` VARCHAR(255) NULL,
+  `replied_by_name` VARCHAR(255) NULL,
+  `replied_at` TIMESTAMP NULL DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_contact_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+ALTER TABLE `contact_messages` ADD COLUMN `status` VARCHAR(20) NOT NULL DEFAULT 'pendiente';
+ALTER TABLE `contact_messages` ADD COLUMN `reply` TEXT NULL;
+ALTER TABLE `contact_messages` ADD COLUMN `replied_by_email` VARCHAR(255) NULL;
+ALTER TABLE `contact_messages` ADD COLUMN `replied_by_name` VARCHAR(255) NULL;
+ALTER TABLE `contact_messages` ADD COLUMN `replied_at` TIMESTAMP NULL DEFAULT NULL;
 
 -- Tabla: site_home (configuración de portada/carrusel)
 CREATE TABLE IF NOT EXISTS `site_home` (
@@ -137,9 +153,47 @@ CREATE TABLE IF NOT EXISTS `order_items` (
   `name` VARCHAR(255) NOT NULL,
   `qty` INT NOT NULL,
   `price` INT NOT NULL,
+  `color` VARCHAR(50) NOT NULL DEFAULT '',
+  `talle` VARCHAR(20) NOT NULL DEFAULT '',
   PRIMARY KEY (`id`),
   KEY `idx_order_items_order` (`order_id`),
   CONSTRAINT `fk_order_items_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+ALTER TABLE `order_items` ADD COLUMN `color` VARCHAR(50) NOT NULL DEFAULT '';
+ALTER TABLE `order_items` ADD COLUMN `talle` VARCHAR(20) NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS `order_returns` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `order_id` INT UNSIGNED NOT NULL,
+  `order_item_id` INT UNSIGNED NULL,
+  `product_id` INT UNSIGNED NULL,
+  `product_name` VARCHAR(255) NOT NULL,
+  `color` VARCHAR(50) NOT NULL DEFAULT '',
+  `talle` VARCHAR(20) NOT NULL DEFAULT '',
+  `qty` INT NOT NULL DEFAULT 1,
+  `reason` TEXT NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'solicitada',
+  `requested_by_email` VARCHAR(255) NULL,
+  `requested_by_name` VARCHAR(255) NULL,
+  `decided_by_email` VARCHAR(255) NULL,
+  `decided_by_name` VARCHAR(255) NULL,
+  `decided_at` TIMESTAMP NULL DEFAULT NULL,
+  `received_by_email` VARCHAR(255) NULL,
+  `received_by_name` VARCHAR(255) NULL,
+  `received_at` TIMESTAMP NULL DEFAULT NULL,
+  `refunded_by_email` VARCHAR(255) NULL,
+  `refunded_by_name` VARCHAR(255) NULL,
+  `refunded_at` TIMESTAMP NULL DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_order_returns_order` (`order_id`),
+  KEY `idx_order_returns_status` (`status`),
+  KEY `idx_order_returns_created_at` (`created_at`),
+  CONSTRAINT `fk_order_returns_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_order_returns_order_item` FOREIGN KEY (`order_item_id`) REFERENCES `order_items` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_order_returns_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- Tabla: user_profiles (datos extendidos del cliente)
@@ -185,6 +239,22 @@ CREATE TABLE IF NOT EXISTS `sales` (
   PRIMARY KEY (`id`),
   KEY `idx_sales_ts` (`ts`),
   KEY `idx_sales_prod` (`product_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- Tabla: returns (devoluciones de productos)
+CREATE TABLE IF NOT EXISTS `returns` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `product_id` INT UNSIGNED NOT NULL,
+  `qty` INT NOT NULL,
+  `reason` TEXT NULL,
+  `order_id` VARCHAR(50) NULL,
+  `created_by_email` VARCHAR(255) NULL,
+  `created_by_name` VARCHAR(255) NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_returns_product` (`product_id`),
+  KEY `idx_returns_created_at` (`created_at`),
+  CONSTRAINT `fk_returns_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 -- Tabla: email_verification_tokens (tokens/códigos de verificación por email)
 CREATE TABLE IF NOT EXISTS `email_verification_tokens` (

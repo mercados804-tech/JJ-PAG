@@ -100,6 +100,8 @@ export default function AdminPanel() {
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
   const [category, setCategory] = useState('')
+  const [productColors, setProductColors] = useState('')
+  const [productSizes, setProductSizes] = useState('')
   const [supplierId, setSupplierId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [imageBase64, setImageBase64] = useState('')
@@ -115,10 +117,14 @@ export default function AdminPanel() {
 
   // Efecto para manejar parámetros de URL y pre-llenar promociones
   useEffect(() => {
+    const isAdminNow = String(panelSession.role || localStorage.getItem('adminRole') || '').toLowerCase() === 'admin'
     const params = new URLSearchParams(window.location.search)
     const tab = params.get('tab')
     const knownTabs = ['dashboard', 'products', 'promotions', 'clients', 'messages', 'inventory', 'orders', 'suppliers', 'sales-report', 'stock-report', 'home', 'settings']
     if (tab && knownTabs.includes(tab)) {
+      if ((tab === 'sales-report' || tab === 'stock-report') && !isAdminNow) {
+        return
+      }
       setActiveTab(tab)
       
       if (tab === 'promotions') {
@@ -135,7 +141,7 @@ export default function AdminPanel() {
         }
       }
     }
-  }, [])
+  }, [panelSession.role])
   const [salesSeries, setSalesSeries] = useState([])
   const [salesSeriesRange, setSalesSeriesRange] = useState('30d')
   // Pedidos, Proveedores, Reportes, Configuración
@@ -157,6 +163,7 @@ export default function AdminPanel() {
   const [newOrder, setNewOrder] = useState({ customer: '', productName: '', quantity: '1' })
   const [orderSale, setOrderSale] = useState({ name: '', quantity: '1' })
   const [shipmentForms, setShipmentForms] = useState({}) // { [orderId]: { recipient, address, province, postalCode } }
+  const [ordersPage, setOrdersPage] = useState(0)
   const [reportRange, setReportRange] = useState({ from: '', to: '' })
   const [reportData, setReportData] = useState({ sold: [], faltantes: [], threshold: 2, company: null })
   const [reportLoading, setReportLoading] = useState(false)
@@ -192,6 +199,11 @@ export default function AdminPanel() {
   const [promoEditingId, setPromoEditingId] = useState(null)
   const [promoEditFields, setPromoEditFields] = useState({ title: '', description: '', price: '', sizes: '', stockPromocion: '', fechaInicio: '', fechaFin: '', estado: 'activa', imageBase64: '', image: '' })
   const [contactMessages, setContactMessages] = useState([])
+  const [contactMessageFilter, setContactMessageFilter] = useState('pendiente')
+  const [selectedContactMessageId, setSelectedContactMessageId] = useState(null)
+  const [contactReplyDraft, setContactReplyDraft] = useState('')
+  const [isSendingContactReply, setIsSendingContactReply] = useState(false)
+  const [messagesPage, setMessagesPage] = useState(0)
   // Inventario: selección y filtros
   const [searchInv, setSearchInv] = useState('')
   const [statusFilter, setStatusFilter] = useState('todos') // todos | ok | bajo | critico
@@ -219,6 +231,29 @@ export default function AdminPanel() {
   const [inventoryMoveSearch, setInventoryMoveSearch] = useState('')
   const [inventoryMoveFrom, setInventoryMoveFrom] = useState('')
   const [inventoryMoveTo, setInventoryMoveTo] = useState('')
+  const [isCreatingStockProduct, setIsCreatingStockProduct] = useState(false)
+  const [returnsLog, setReturnsLog] = useState([])
+
+  useEffect(() => {
+    if (activeTab === 'orders') setOrdersPage(0)
+    if (activeTab === 'messages') setMessagesPage(0)
+  }, [activeTab])
+
+  useEffect(() => {
+    setOrdersPage(0)
+  }, [orders.length])
+
+  useEffect(() => {
+    setMessagesPage(0)
+  }, [contactMessages.length, contactMessageFilter])
+  const [returnsSearch, setReturnsSearch] = useState('')
+  const [returnsFrom, setReturnsFrom] = useState('')
+  const [returnsTo, setReturnsTo] = useState('')
+  const [returnDraft, setReturnDraft] = useState({ productName: '', qty: '1', orderId: '', reason: '' })
+  const [isRegisteringReturn, setIsRegisteringReturn] = useState(false)
+  const [orderReturns, setOrderReturns] = useState([])
+  const [orderReturnDraft, setOrderReturnDraft] = useState({ orderId: '', orderItemId: '', qty: '1', reason: '' })
+  const [isCreatingOrderReturn, setIsCreatingOrderReturn] = useState(false)
 
   const statusInfo = (q) => {
     const qty = Number(q) || 0
@@ -247,8 +282,10 @@ export default function AdminPanel() {
   const isSeller = String(role).toLowerCase() === 'vendedor'
   const isStock = String(role).toLowerCase() === 'stock'
   const canAccessSales = isAdmin || isSeller
+  const canAccessOrders = isAdmin || isSeller || isStock
   const canManageProducts = isAdmin || isSeller
   const canManagePromotions = isAdmin || isSeller
+  const canAccessMessages = isAdmin || isSeller
   const roleLabel = isAdmin ? 'Administrador' : (isSeller ? 'Vendedor' : 'Control de Stock')
   const dashboardTabLabel = isSeller ? 'Ventas diarias' : 'Resumen'
   const userRoleOptions = [
@@ -265,15 +302,16 @@ export default function AdminPanel() {
     { id:'dashboard', label: dashboardTabLabel, visible: isAdmin || isSeller },
     { id:'products', label:'Productos', visible: canManageProducts },
     { id:'promotions', label:'Promociones', visible: canManagePromotions },
-    { id:'clients', label:'Roles', visible: isAdmin },
-    { id:'messages', label:'Mensajes', visible: isAdmin },
+    { id:'messages', label:'Mensajes', visible: canAccessMessages },
     { id:'inventory', label:'Inventario', visible: isAdmin || isStock },
-    { id:'orders', label:'Pedidos', visible: isAdmin || isSeller },
-    { id:'suppliers', label:'Proveedores', visible: isAdmin },
-    { id:'sales-report', label:'Reporte de Ventas', visible: isAdmin || isSeller },
-    { id:'home', label:'Inicio', visible: isAdmin },
-    { id:'settings', label:'Configuración', visible: isAdmin },
-    { id:'stock-report', label:'Reporte de Stock', visible: isAdmin || isStock },
+    { id:'orders', label:'Pedidos', visible: canAccessOrders },
+    { id:'order-returns', label:'Devoluciones', visible: canAccessOrders },
+    { id:'suppliers', label:'Proveedores', visible: isAdmin || isStock },
+    { id:'clients', label:'Roles', visible: isAdmin },
+    { id:'sales-report', label:'Reporte de Ventas', visible: isAdmin, isTail: true },
+    { id:'stock-report', label:'Reporte de Stock', visible: isAdmin, isTail: true },
+    { id:'home', label:'Inicio', visible: isAdmin, isTail: true },
+    { id:'settings', label:'Configuración', visible: isAdmin, isTail: true },
   ].filter(tab => tab.visible)
 
   const authHeaders = (headers = {}) => {
@@ -333,7 +371,7 @@ export default function AdminPanel() {
   }
 
   const refreshOrders = async () => {
-    if (!canAccessSales) {
+    if (!canAccessOrders) {
       setOrders([])
       return []
     }
@@ -357,7 +395,7 @@ export default function AdminPanel() {
   }
 
   const refreshSuppliers = async () => {
-    if (!isAdmin) {
+    if (!(isAdmin || isStock)) {
       setSuppliers([])
       return []
     }
@@ -369,7 +407,7 @@ export default function AdminPanel() {
   }
 
   const refreshMessages = async () => {
-    if (!isAdmin) {
+    if (!canAccessMessages) {
       setContactMessages([])
       return []
     }
@@ -378,6 +416,35 @@ export default function AdminPanel() {
     const list = Array.isArray(data) ? data : []
     setContactMessages(list)
     return list
+  }
+
+  const saveContactMessageReply = async ({ messageId, replyText }) => {
+    if (!canAccessMessages) return false
+    const id = Number(messageId)
+    const reply = String(replyText || '').trim()
+    if (!Number.isFinite(id) || !reply) return false
+
+    setIsSendingContactReply(true)
+    try {
+      const resp = await fetchAdmin(`/api/admin/contact-messages/${encodeURIComponent(id)}/reply`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply }),
+      })
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok || !data?.ok) {
+        notify(data?.error || 'No se pudo enviar la respuesta', 'error')
+        return false
+      }
+      notify(data?.mailed === false ? 'Respuesta guardada (correo no enviado)' : 'Respuesta enviada', 'success')
+      await refreshMessages()
+      return true
+    } catch {
+      notify('No se pudo enviar la respuesta', 'error')
+      return false
+    } finally {
+      setIsSendingContactReply(false)
+    }
   }
 
   const refreshPromotions = async () => {
@@ -389,6 +456,30 @@ export default function AdminPanel() {
     const data = await resp.json()
     const list = dedupeById(Array.isArray(data) ? data : [])
     setPromotions(list)
+    return list
+  }
+
+  const refreshReturns = async () => {
+    if (!(isAdmin || isStock)) {
+      setReturnsLog([])
+      return []
+    }
+    const resp = await fetchAdmin('/api/admin/returns')
+    const data = await resp.json()
+    const list = Array.isArray(data) ? data : []
+    setReturnsLog(list)
+    return list
+  }
+
+  const refreshOrderReturns = async () => {
+    if (!canAccessOrders) {
+      setOrderReturns([])
+      return []
+    }
+    const resp = await fetchAdmin('/api/admin/order-returns')
+    const data = await resp.json()
+    const list = Array.isArray(data) ? data : []
+    setOrderReturns(list)
     return list
   }
 
@@ -657,14 +748,40 @@ export default function AdminPanel() {
   }, [activeTab, isAdmin])
 
   useEffect(() => {
-    if (activeTab !== 'orders' || !canAccessSales) return
+    if (activeTab !== 'orders' || !canAccessOrders) return
     refreshOrders().catch(() => setOrders([]))
-  }, [activeTab, canAccessSales])
+  }, [activeTab, canAccessOrders])
 
   useEffect(() => {
-    if (activeTab !== 'messages' || !isAdmin) return
+    if (activeTab !== 'order-returns' || !canAccessOrders) return
+    refreshOrders().catch(() => void 0)
+    refreshOrderReturns().catch(() => setOrderReturns([]))
+  }, [activeTab, canAccessOrders])
+
+  useEffect(() => {
+    if (activeTab !== 'messages' || !canAccessMessages) return
     refreshMessages().catch(() => setContactMessages([]))
-  }, [activeTab, isAdmin])
+  }, [activeTab, canAccessMessages])
+
+  useEffect(() => {
+    if (activeTab !== 'messages' || !canAccessMessages) return
+    const list = Array.isArray(contactMessages) ? contactMessages : []
+    if (list.length === 0) {
+      if (selectedContactMessageId != null) setSelectedContactMessageId(null)
+      if (contactReplyDraft) setContactReplyDraft('')
+      return
+    }
+    const hasSelected = selectedContactMessageId != null && list.some(m => String(m.id) === String(selectedContactMessageId))
+    if (!hasSelected) setSelectedContactMessageId(list[0].id)
+  }, [activeTab, canAccessMessages, contactMessages, selectedContactMessageId, contactReplyDraft])
+
+  useEffect(() => {
+    if (activeTab !== 'messages' || !canAccessMessages) return
+    const list = Array.isArray(contactMessages) ? contactMessages : []
+    const selected = list.find(m => String(m.id) === String(selectedContactMessageId))
+    const nextDraft = selected?.reply ? String(selected.reply) : ''
+    if (String(contactReplyDraft) !== String(nextDraft)) setContactReplyDraft(nextDraft)
+  }, [activeTab, canAccessMessages, contactMessages, selectedContactMessageId])
 
   useEffect(() => {
     if (activeTab !== 'promotions' || !canManagePromotions) return
@@ -672,29 +789,12 @@ export default function AdminPanel() {
   }, [activeTab, canManagePromotions])
 
   useEffect(() => {
-    const role = panelSession.role || localStorage.getItem('adminRole') || ''
-    const isAdmin = String(role).toLowerCase() === 'admin'
-    const isSeller = String(role).toLowerCase() === 'vendedor'
-    const isStock = String(role).toLowerCase() === 'stock'
-    const canManageProducts = isAdmin || isSeller
-    const canManagePromotions = isAdmin || isSeller
-    const dashboardTabLabel = isSeller ? 'Ventas diarias' : 'Resumen'
+    if (activeTab !== 'inventory') return
+    if (!(isAdmin || isStock)) return
+    refreshReturns().catch(() => setReturnsLog([]))
+  }, [activeTab, isAdmin, isStock])
 
-    const adminTabs = [
-      { id:'dashboard', label: dashboardTabLabel, visible: isAdmin || isSeller },
-      { id:'products', label:'Productos', visible: canManageProducts },
-      { id:'promotions', label:'Promociones', visible: canManagePromotions },
-      { id:'clients', label:'Roles', visible: isAdmin },
-      { id:'messages', label:'Mensajes', visible: isAdmin },
-      { id:'inventory', label:'Inventario', visible: isAdmin || isStock },
-      { id:'orders', label:'Pedidos', visible: isAdmin || isSeller },
-      { id:'suppliers', label:'Proveedores', visible: isAdmin },
-      { id:'sales-report', label:'Reporte de Ventas', visible: isAdmin || isSeller },
-      { id:'home', label:'Inicio', visible: isAdmin },
-      { id:'settings', label:'Configuración', visible: isAdmin },
-      { id:'stock-report', label:'Reporte de Stock', visible: isAdmin || isStock },
-    ].filter(tab => tab.visible)
-
+  useEffect(() => {
     if (!adminTabs.some(tab => tab.id === activeTab)) {
       setActiveTab(adminTabs[0]?.id || 'dashboard')
     }
@@ -738,6 +838,61 @@ export default function AdminPanel() {
     const list = await fetch(apiUrl('/api/admin/orders'), { headers: { Authorization: `Bearer ${token}` } }); setOrders(await list.json())
   }
 
+  const createOrderReturnRequest = async (e) => {
+    e.preventDefault()
+    const token = localStorage.getItem('adminToken')
+    if (!token) { navigate('/admin/login'); return }
+    const orderId = orderReturnDraft.orderId
+    const orderItemId = orderReturnDraft.orderItemId
+    const qty = Number(orderReturnDraft.qty)
+    if (!orderId || !orderItemId || !Number.isFinite(qty) || qty <= 0) {
+      notify('Completá pedido, item y cantidad', 'warning')
+      return
+    }
+    try {
+      setIsCreatingOrderReturn(true)
+      const resp = await fetch(apiUrl('/api/admin/order-returns'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          orderId: Number(orderId),
+          orderItemId: Number(orderItemId),
+          qty: Number(qty),
+          reason: (orderReturnDraft.reason || '').trim() || undefined,
+        }),
+      })
+      const data = await resp.json()
+      if (!resp.ok || !data.ok) {
+        notify(data.error || 'Error al crear devolución', 'error')
+        return
+      }
+      notify('Devolución solicitada', 'success')
+      await refreshOrderReturns()
+      setOrderReturnDraft({ orderId: '', orderItemId: '', qty: '1', reason: '' })
+    } catch (err) {
+      console.error(err)
+      notify('Error de red al conectar con el backend', 'error')
+    } finally {
+      setIsCreatingOrderReturn(false)
+    }
+  }
+
+  const updateOrderReturnStatus = async (id, status) => {
+    const token = localStorage.getItem('adminToken')
+    if (!token) { navigate('/admin/login'); return }
+    const resp = await fetch(apiUrl(`/api/admin/order-returns/${id}/status`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status }),
+    })
+    const data = await resp.json()
+    if (!resp.ok || !data.ok) {
+      notify(data.error || 'Error al actualizar devolución', 'error')
+      return
+    }
+    await refreshOrderReturns()
+  }
+
   const updateShipmentForm = (id, field, value) => {
     setShipmentForms(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }))
   }
@@ -776,11 +931,13 @@ export default function AdminPanel() {
   }
 
   const startEditSupplier = (s) => {
+    if (!isAdmin) return
     setEditingSupplierId(s.id)
     setEditSupplierFields({ name: s.name, contact: s.contact || '', email: s.email || '', phone: s.phone || '', notes: s.notes || '' })
   }
 
   const saveEditSupplier = async () => {
+    if (!isAdmin) { notify('No tenés permisos para editar proveedores', 'warning'); return }
     const token = localStorage.getItem('adminToken')
     if (!token) { navigate('/admin/login'); return }
     const resp = await fetch(apiUrl(`/api/admin/suppliers/${editingSupplierId}`), { method:'PUT', headers:{ 'Content-Type':'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(editSupplierFields) })
@@ -792,6 +949,7 @@ export default function AdminPanel() {
   }
 
   const deleteSupplier = async (id) => {
+    if (!isAdmin) { notify('No tenés permisos para eliminar proveedores', 'warning'); return }
     if (!confirm('¿Eliminar este proveedor?')) return
     const token = localStorage.getItem('adminToken')
     if (!token) { navigate('/admin/login'); return }
@@ -1363,6 +1521,8 @@ export default function AdminPanel() {
       setName('')
       setPrice('')
       setCategory('')
+      setProductColors('')
+      setProductSizes('')
       setSupplierId('')
       setImageBase64('')
       setPreview('')
@@ -1371,6 +1531,101 @@ export default function AdminPanel() {
     } catch (err) {
       console.error(err)
       notify('Error de red al conectar con el backend', 'error')
+    }
+  }
+
+  const createProductFromStockPanel = async (e) => {
+    e.preventDefault()
+    const token = localStorage.getItem('adminToken')
+    if (!token) {
+      notify('Sesión de admin no encontrada', 'error')
+      navigate('/admin/login')
+      return
+    }
+    const payload = {
+      name: (name || '').trim(),
+      price: Number(price),
+      category: (category || '').trim(),
+      colors: (productColors || '').trim(),
+      sizes: (productSizes || '').trim(),
+      supplier_id: supplierId ? Number(supplierId) : null,
+      imageBase64: imageBase64 ? imageBase64 : undefined,
+      quantity: Number(quantity) || 0,
+    }
+    if (!payload.name || !Number.isFinite(payload.price)) {
+      notify('Completá nombre y precio', 'warning')
+      return
+    }
+    try {
+      setIsCreatingStockProduct(true)
+      const resp = await fetch(apiUrl('/api/admin/products'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      })
+      const data = await resp.json()
+      if (!resp.ok || !data.ok) {
+        notify(data.error || 'Error al cargar producto', 'error')
+        return
+      }
+      notify('Producto cargado', 'success')
+      await refreshProducts()
+      setName('')
+      setPrice('')
+      setCategory('')
+      setProductColors('')
+      setProductSizes('')
+      setSupplierId('')
+      setImageBase64('')
+      setPreview('')
+      setQuantity('')
+    } catch (err) {
+      console.error(err)
+      notify('Error de red al conectar con el backend', 'error')
+    } finally {
+      setIsCreatingStockProduct(false)
+    }
+  }
+
+  const registerReturn = async (e) => {
+    e.preventDefault()
+    const token = localStorage.getItem('adminToken')
+    if (!token) {
+      notify('Sesión de admin no encontrada', 'error')
+      navigate('/admin/login')
+      return
+    }
+    const productName = String(returnDraft.productName || '').trim()
+    const q = Number(returnDraft.qty)
+    if (!productName || !q || q <= 0) {
+      notify('Completá el nombre del producto y una cantidad válida', 'warning')
+      return
+    }
+    try {
+      setIsRegisteringReturn(true)
+      const resp = await fetch(apiUrl('/api/admin/returns'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          productName: productName || undefined,
+          qty: q,
+          orderId: (returnDraft.orderId || '').trim() || undefined,
+          reason: (returnDraft.reason || '').trim() || undefined,
+        }),
+      })
+      const data = await resp.json()
+      if (!resp.ok || !data.ok) {
+        notify(data.error || 'Error al registrar devolución', 'error')
+        return
+      }
+      notify('Devolución registrada', 'success')
+      await Promise.all([refreshProducts(), refreshReturns()])
+      setReturnDraft({ productName: '', qty: '1', orderId: '', reason: '' })
+    } catch (err) {
+      console.error(err)
+      notify('Error de red al conectar con el backend', 'error')
+    } finally {
+      setIsRegisteringReturn(false)
     }
   }
 
@@ -1539,6 +1794,8 @@ export default function AdminPanel() {
     setName('')
     setPrice('')
     setCategory('')
+    setProductColors('')
+    setProductSizes('')
     setSupplierId('')
     setImageBase64('')
     setPreview('')
@@ -1713,6 +1970,7 @@ export default function AdminPanel() {
       quantity: backend?.quantity ?? tpl.quantity ?? 0,
     }
   })
+  const productCardsCatalog = isSeller ? sellerProductsCatalog : products
   const promotionProductCatalog = isSeller ? sellerProductsCatalog : products
   const selectedPromoProduct = promotionProductCatalog.find(p => String(p.id) === String(promoProductId))
   const selectedEditingPromotion = promotions.find(p => String(p.id) === String(promoEditingId))
@@ -2144,17 +2402,32 @@ export default function AdminPanel() {
           </div>
         )}
         <nav className="space-y-1">
-          {adminTabs.map(it => (
+          {adminTabs.filter(t => !t.isTail).map(it => (
+            <button key={it.id} className={`w-full text-left px-4 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] ${activeTab===it.id ? 'bg-blue-50 text-[#1E3A8A]' : 'text-gray-500 hover:bg-gray-50'}`} onClick={()=>setActiveTab(it.id)}>{it.label}</button>
+          ))}
+          {adminTabs.some(t => t.isTail) && (
+            <div className="py-2">
+              <div className="border-t border-gray-100" />
+            </div>
+          )}
+          {adminTabs.filter(t => t.isTail).map(it => (
             <button key={it.id} className={`w-full text-left px-4 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] ${activeTab===it.id ? 'bg-blue-50 text-[#1E3A8A]' : 'text-gray-500 hover:bg-gray-50'}`} onClick={()=>setActiveTab(it.id)}>{it.label}</button>
           ))}
         </nav>
-        {isStock && activeTab === 'inventory' && (
+        {(isStock || isAdmin) && activeTab === 'inventory' && (
           <div className="mt-4 space-y-1">
-            {[
-              { id: 'gestion', label: 'Gestión' },
-              { id: 'movimientos', label: 'Movimientos' },
-              { id: 'alertas', label: 'Alertas' },
-            ].map(t => (
+            {(isAdmin
+              ? [
+                  { id: 'inventario', label: 'Inventario' },
+                  { id: 'gestion', label: 'Gestión' },
+                  { id: 'movimientos', label: 'Movimientos' },
+                  { id: 'alertas', label: 'Alertas' },
+                ]
+              : [
+                  { id: 'gestion', label: 'Gestión' },
+                  { id: 'movimientos', label: 'Movimientos' },
+                  { id: 'alertas', label: 'Alertas' },
+                ]).map(t => (
               <button
                 key={t.id}
                 type="button"
@@ -2351,12 +2624,11 @@ export default function AdminPanel() {
 
         {activeTab === 'products' && (
           <div>
-            {isSeller ? (
-              <div className="space-y-6">
+            <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-white rounded-[2rem] border border-gray-100 p-6 shadow-sm">
                     <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Productos activos</p>
-                    <p className="mt-2 text-3xl font-black text-[#1E3A8A]">{sellerProductsCatalog.length}</p>
+                    <p className="mt-2 text-3xl font-black text-[#1E3A8A]">{productCardsCatalog.length}</p>
                   </div>
                   <div className="bg-white rounded-[2rem] border border-gray-100 p-6 shadow-sm">
                     <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">En oferta</p>
@@ -2657,8 +2929,8 @@ export default function AdminPanel() {
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {sellerProductsCatalog.length === 0 && <p className="text-gray-600">Sin productos cargados.</p>}
-                  {sellerProductsCatalog.map((p) => {
+                  {productCardsCatalog.length === 0 && <p className="text-gray-600">Sin productos cargados.</p>}
+                  {productCardsCatalog.map((p) => {
                     const status = getProductPromotionStatus(p)
                     const promo = status.promo
                     const productImage = getPublicProductImage(p)
@@ -2714,170 +2986,7 @@ export default function AdminPanel() {
                     )
                   })}
                 </div>
-              </div>
-            ) : (
-              <>
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-bold">Gestión de productos</h2>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
-                    <h3 className="text-lg font-semibold mb-3">Agregar Producto</h3>
-                    <form onSubmit={onSubmit} className="space-y-3">
-                      <div>
-                        <label className="block text-sm text-gray-700">Nombre</label>
-                        <input value={name} onChange={e=>setName(e.target.value)} className="border border-gray-300 rounded-md p-2 w-full" placeholder="Nombre del producto" />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-700">Precio</label>
-                        <input value={price} onChange={e=>setPrice(e.target.value)} type="number" min="0" className="border border-gray-300 rounded-md p-2 w-full" placeholder="0" />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-700">Categoría</label>
-                        <input value={category} onChange={e=>setCategory(e.target.value)} className="border border-gray-300 rounded-md p-2 w-full" placeholder="Ej: Remeras" />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-700">Proveedor</label>
-                        <select value={supplierId} onChange={e=>setSupplierId(e.target.value)} className="border border-gray-300 rounded-md p-2 w-full">
-                          <option value="">Seleccione un proveedor</option>
-                          {suppliers.map(s => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-700">Imagen</label>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={onFileChange}
-                          className="block file:mr-3 file:px-3 file:py-2 file:rounded file:border-0 file:bg-brandBlue file:text-white file:hover:bg-brandNav"
-                        />
-                        {preview && (
-                          <img src={preview} alt="Vista previa" className="mt-2 w-40 rounded" />
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-700">Cantidad</label>
-                        <input value={quantity} onChange={e=>setQuantity(e.target.value)} type="number" min="0" className="border border-gray-300 rounded-md p-2 w-full" placeholder="0" />
-                      </div>
-                      <button type="submit" className="px-4 py-2 bg-brandBlue text-white rounded-md">Crear</button>
-                    </form>
-                  </div>
-
-                  <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
-                    <h3 className="text-lg font-semibold mb-3">Plantillas de Promociones (Legacy)</h3>
-                    <p className="text-sm text-gray-500 mb-4">Estas son las tarjetas que estaban originalmente en la web. Podés usarlas como base para crear nuevas ofertas reales.</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto p-2 border border-gray-100 rounded-md mb-8">
-                      {legacyPromos.map((lp, idx) => (
-                        <div key={`legacy-${idx}`} className="border border-gray-200 rounded-lg p-3 hover:border-blue-300 transition-colors flex flex-col h-full bg-gray-50">
-                          <img src={lp.image} alt={lp.title} className="w-full h-32 object-cover rounded mb-2" />
-                          <h4 className="font-bold text-sm truncate">{lp.title}</h4>
-                          <p className="text-xs text-gray-500 mb-2">{lp.discount}</p>
-                          <button
-                            onClick={() => {
-                              setPromoTitle(lp.title)
-                              setPromoPreview(lp.image)
-                              setPromoImageBase64(lp.image)
-                              const cleanPrice = lp.price.replace(/[^\d]/g, '')
-                              if (cleanPrice) setPromoPrice(cleanPrice.slice(0, -2))
-                              setPromoSizes(lp.sizes)
-                              notify('Datos cargados desde plantilla', 'info')
-                              window.scrollTo({ top: 0, behavior: 'smooth' })
-                            }}
-                            className="mt-auto w-full py-2 bg-emerald-600 text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-700 transition-colors"
-                          >
-                            Usar Plantilla
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    <h3 className="text-lg font-semibold mb-3">Listado</h3>
-                    <div className="flex flex-wrap gap-4">
-                      {products.length === 0 && <p className="text-gray-600">Sin productos.</p>}
-                      {products.map(p => (
-                        <div key={p.id} className="border border-gray-300 rounded-md p-3 w-64">
-                          <img src={p.image} alt={p.name} className="w-full rounded" />
-                          <h3 className="mt-2 font-semibold">{p.name}</h3>
-                          <p>${p.price}</p>
-                          <p className="text-sm text-gray-600">{p.category || ''}</p>
-                          <p className="text-sm">Stock: {p.quantity ?? 0}</p>
-                          <div className="mt-2 flex gap-2">
-                            <button className="px-3 py-1 bg-brandNav text-white rounded" onClick={()=>startEdit(p)}>Editar</button>
-                            {isAdmin && <button className="px-3 py-1 bg-red-600 text-white rounded" onClick={()=>deleteProduct(p.id)}>Eliminar</button>}
-                          </div>
-                          <div className="mt-2 flex gap-2 items-center">
-                            <input type="number" min="1" placeholder="Cant." className="border border-gray-300 rounded p-1 w-20" id={`sale-${p.id}`} />
-                            <input type="number" min="0" step="0.01" placeholder={`$${p.price}`} className="border border-gray-300 rounded p-1 w-24" id={`salep-${p.id}`} />
-                            <button
-                              className={`px-3 py-1 bg-[#10B981] text-white rounded ${isRegisteringSale ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              disabled={isRegisteringSale}
-                              onClick={async ()=>{
-                                const el = document.getElementById(`sale-${p.id}`)
-                                const elp = document.getElementById(`salep-${p.id}`)
-                                const up = elp && elp.value ? Number(elp.value) : Number(p.price)
-                                const ok = await registerSale(p.id, el ? el.value : '0', undefined, up)
-                                if (ok) {
-                                  if (el) el.value = ''
-                                  if (elp) elp.value = ''
-                                }
-                              }}
-                            >{isRegisteringSale ? '...' : 'Registrar venta'}</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                {editingId && (
-                  <div className="mt-4 p-4 border border-gray-300 rounded-md">
-                    <h3 className="font-semibold mb-2">Editar producto</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm">Nombre</label>
-                        <input value={editFields.name} onChange={e=>setEditFields(v=>({ ...v, name: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" />
-                      </div>
-                      <div>
-                        <label className="block text-sm">Precio</label>
-                        <input value={editFields.price} onChange={e=>setEditFields(v=>({ ...v, price: e.target.value }))} type="number" min="0" className="border border-gray-300 rounded p-2 w-full" />
-                      </div>
-                      <div>
-                        <label className="block text-sm">Categoría</label>
-                        <input value={editFields.category} onChange={e=>setEditFields(v=>({ ...v, category: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" />
-                      </div>
-                      <div>
-                        <label className="block text-sm">Proveedor</label>
-                        <select value={editFields.supplier_id} onChange={e=>setEditFields(v=>({ ...v, supplier_id: e.target.value }))} className="border border-gray-300 rounded p-2 w-full">
-                          <option value="">Seleccione un proveedor</option>
-                          {suppliers.map(s => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm">Cantidad</label>
-                        <input value={editFields.quantity} onChange={e=>setEditFields(v=>({ ...v, quantity: e.target.value }))} type="number" min="0" className="border border-gray-300 rounded p-2 w-full" />
-                      </div>
-                      <div>
-                        <label className="block text-sm">Imagen</label>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={onEditFileChange}
-                          className="block file:mr-3 file:px-3 file:py-2 file:rounded file:border-0 file:bg-brandBlue file:text-white file:hover:bg-brandNav"
-                        />
-                        {preview && <img src={preview} alt="Vista previa" className="mt-2 w-40 rounded" />}
-                      </div>
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <button className="px-4 py-2 bg-brandBlue text-white rounded" onClick={saveEdit}>Guardar</button>
-                      <button className="px-4 py-2 bg-gray-300 rounded" onClick={()=>{ setEditingId(null); setPreview(''); }}>Cancelar</button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+            </div>
           </div>
         )}
 
@@ -3158,33 +3267,213 @@ export default function AdminPanel() {
         {activeTab === 'messages' && (
           <div>
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Mensajes de contacto</h2>
+              <h2 className="text-xl font-bold">Mensajes</h2>
             </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
-              {contactMessages.length === 0 ? (
-                <p className="text-gray-600">No hay mensajes registrados.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="text-left border-b">
-                        <th className="py-2 px-2">Nombre</th>
-                        <th className="py-2 px-2">Email</th>
-                        <th className="py-2 px-2">Mensaje</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {contactMessages.map(m => (
-                        <tr key={m.id} className="border-b align-top">
-                          <td className="py-2 px-2 whitespace-nowrap">{m.name}</td>
-                          <td className="py-2 px-2 whitespace-nowrap">{m.email}</td>
-                          <td className="py-2 px-2">{m.message}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-white rounded-[2rem] border border-gray-100 p-6 shadow-sm">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Pendientes</p>
+                  <p className="mt-2 text-3xl font-black text-amber-500">
+                    {(Array.isArray(contactMessages) ? contactMessages : []).filter(m => String(m.status || 'pendiente').toLowerCase() !== 'respondida').length}
+                  </p>
                 </div>
-              )}
+                <div className="bg-white rounded-[2rem] border border-gray-100 p-6 shadow-sm">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Respondidas</p>
+                  <p className="mt-2 text-3xl font-black text-emerald-600">
+                    {(Array.isArray(contactMessages) ? contactMessages : []).filter(m => String(m.status || '').toLowerCase() === 'respondida').length}
+                  </p>
+                </div>
+                <div className="bg-white rounded-[2rem] border border-gray-100 p-6 shadow-sm">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Total</p>
+                  <p className="mt-2 text-3xl font-black text-[#1E3A8A]">{(Array.isArray(contactMessages) ? contactMessages : []).length}</p>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-[2rem] border border-gray-100 p-6 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-black uppercase tracking-widest text-gray-900">Bandeja</h3>
+                  <p className="text-sm text-gray-500">Consultas enviadas desde la web</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                  <select
+                    value={contactMessageFilter}
+                    onChange={(e) => {
+                      setContactMessageFilter(e.target.value)
+                      setSelectedContactMessageId(null)
+                      setMessagesPage(0)
+                    }}
+                    className="px-4 py-3 rounded-2xl bg-gray-50 text-gray-900 text-xs font-black uppercase tracking-widest"
+                  >
+                    <option value="pendiente">Pendientes</option>
+                    <option value="respondida">Respondidas</option>
+                    <option value="todas">Todas</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => refreshMessages().catch(() => setContactMessages([]))}
+                    className="px-5 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest"
+                  >
+                    Actualizar
+                  </button>
+                </div>
+              </div>
+
+              {(() => {
+                const base = Array.isArray(contactMessages) ? contactMessages : []
+                const normalized = base.map(m => ({ ...m, status: (m && m.status) ? m.status : 'pendiente' }))
+                const filtered = contactMessageFilter === 'todas'
+                  ? normalized
+                  : normalized.filter(m => String(m.status || 'pendiente').toLowerCase() === String(contactMessageFilter).toLowerCase())
+                const perPage = 5
+                const totalPages = Math.max(1, Math.ceil(filtered.length / perPage))
+                const safePage = Math.max(0, Math.min(messagesPage, totalPages - 1))
+                const paged = filtered.slice(safePage * perPage, safePage * perPage + perPage)
+                const selected = filtered.find(m => String(m.id) === String(selectedContactMessageId))
+                  || normalized.find(m => String(m.id) === String(selectedContactMessageId))
+                  || null
+                const statusValue = String(selected?.status || 'pendiente').toLowerCase()
+                const isResponded = statusValue === 'respondida'
+
+                return (
+                  <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-6">
+                    <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden">
+                      {filtered.length === 0 ? (
+                        <div className="p-6">
+                          <p className="text-gray-600">No hay mensajes para este filtro.</p>
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-sm">
+                            <thead>
+                              <tr className="text-left border-b">
+                                <th className="py-3 px-4">Fecha</th>
+                                <th className="py-3 px-4">Nombre</th>
+                                <th className="py-3 px-4">Email</th>
+                                <th className="py-3 px-4">Estado</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paged.map(m => {
+                                const isActive = String(m.id) === String(selectedContactMessageId)
+                                const tone = String(m.status || 'pendiente').toLowerCase() === 'respondida'
+                                  ? 'bg-emerald-600/10 text-emerald-700 border border-emerald-600/20'
+                                  : 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
+                                const label = String(m.status || 'pendiente').toLowerCase() === 'respondida' ? 'Respondida' : 'Pendiente'
+                                return (
+                                  <tr
+                                    key={m.id}
+                                    className={`border-b align-top cursor-pointer ${isActive ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
+                                    onClick={() => setSelectedContactMessageId(m.id)}
+                                  >
+                                    <td className="py-3 px-4 whitespace-nowrap">{m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : '-'}</td>
+                                    <td className="py-3 px-4 whitespace-nowrap font-bold text-gray-900">{m.name}</td>
+                                    <td className="py-3 px-4 whitespace-nowrap">{m.email}</td>
+                                    <td className="py-3 px-4">
+                                      <span className={`inline-flex px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest ${tone}`}>{label}</span>
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {filtered.length > 0 && (
+                        <div className="p-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                          <div className="text-xs text-gray-600">
+                            {`Mostrando ${Math.min(safePage * perPage + 1, filtered.length)}-${Math.min(safePage * perPage + perPage, filtered.length)} de ${filtered.length}`}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest ${safePage <= 0 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                              onClick={() => setMessagesPage(p => Math.max(0, p - 1))}
+                              disabled={safePage <= 0}
+                            >
+                              Anterior
+                            </button>
+                            <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                              {`${safePage + 1}/${totalPages}`}
+                            </div>
+                            <button
+                              type="button"
+                              className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest ${safePage >= totalPages - 1 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                              onClick={() => setMessagesPage(p => Math.min(totalPages - 1, p + 1))}
+                              disabled={safePage >= totalPages - 1}
+                            >
+                              Siguiente
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="bg-white rounded-[2rem] border border-gray-100 p-6 shadow-sm">
+                      {!selected ? (
+                        <p className="text-gray-600">Seleccioná un mensaje para ver el detalle.</p>
+                      ) : (
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Cliente</p>
+                              <p className="text-lg font-black text-gray-900">{selected.name}</p>
+                              <p className="text-sm text-gray-500">{selected.email}</p>
+                            </div>
+                            <div>
+                              <span className={`inline-flex px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest ${isResponded ? 'bg-emerald-600/10 text-emerald-700 border border-emerald-600/20' : 'bg-amber-500/10 text-amber-700 border border-amber-500/20'}`}>
+                                {isResponded ? 'Respondida' : 'Pendiente'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="bg-gray-50 rounded-2xl p-4">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Mensaje</p>
+                            <div className="text-sm text-gray-900 whitespace-pre-wrap">{selected.message}</div>
+                          </div>
+
+                          {isResponded && (
+                            <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700 mb-2">Respuesta</p>
+                              <div className="text-sm text-gray-900 whitespace-pre-wrap">{selected.reply || '-'}</div>
+                              <div className="mt-3 text-xs text-gray-600">
+                                {selected.replied_at ? `Respondida: ${new Date(selected.replied_at).toLocaleString('es-AR')}` : ''}
+                              </div>
+                            </div>
+                          )}
+
+                          {!isResponded && (
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Respuesta</label>
+                                <textarea
+                                  value={contactReplyDraft}
+                                  onChange={(e) => setContactReplyDraft(e.target.value)}
+                                  rows={5}
+                                  className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                                  placeholder="Escribí la respuesta para el cliente..."
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                disabled={isSendingContactReply || !String(contactReplyDraft || '').trim()}
+                                onClick={async () => {
+                                  const ok = await saveContactMessageReply({ messageId: selected.id, replyText: contactReplyDraft })
+                                  if (ok) {
+                                    setContactReplyDraft('')
+                                  }
+                                }}
+                                className={`w-full px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-widest ${isSendingContactReply || !String(contactReplyDraft || '').trim() ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-[#1E3A8A] text-white hover:bg-brandNav'}`}
+                              >
+                                {isSendingContactReply ? 'Enviando...' : 'Enviar respuesta'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}
@@ -3204,9 +3493,220 @@ export default function AdminPanel() {
               </div>
             </div>
 
+            {(isStock || isAdmin) && (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <div>
+                      <h3 className="text-lg font-black uppercase tracking-widest text-gray-900">Cargar producto nuevo</h3>
+                      <p className="text-sm text-gray-500">Se guarda directamente en la base de datos.</p>
+                    </div>
+                  </div>
+                  <form onSubmit={createProductFromStockPanel} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Nombre</label>
+                      <input value={name} onChange={e=>setName(e.target.value)} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Nombre del producto" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Precio</label>
+                      <input value={price} onChange={e=>setPrice(e.target.value)} type="number" min="0" className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="0" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Cantidad</label>
+                      <input value={quantity} onChange={e=>setQuantity(e.target.value)} type="number" min="0" className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="0" />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Categoría</label>
+                      <input value={category} onChange={e=>setCategory(e.target.value)} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Ej: Remeras" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Colores</label>
+                      <input value={productColors} onChange={e=>setProductColors(e.target.value)} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Ej: Negro, Blanco, Azul" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Talles</label>
+                      <input value={productSizes} onChange={e=>setProductSizes(e.target.value)} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Ej: S, M, L, XL" />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Imagen (opcional)</label>
+                      <input type="file" accept="image/*" onChange={onFileChange} className="block w-full file:mr-3 file:px-4 file:py-3 file:rounded-2xl file:border-0 file:bg-[#1E3A8A] file:text-white file:font-black file:uppercase file:tracking-widest text-sm" />
+                      {preview && <img src={preview} alt="Vista previa" className="mt-3 w-24 h-24 rounded-2xl object-cover" />}
+                    </div>
+                    <div className="md:col-span-2 flex flex-wrap gap-3">
+                      <button
+                        type="submit"
+                        disabled={isCreatingStockProduct}
+                        className={`px-5 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest ${isCreatingStockProduct ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {isCreatingStockProduct ? 'Guardando...' : 'Cargar a BD'}
+                      </button>
+                      <button
+                        type="button"
+                        className="px-5 py-3 rounded-2xl bg-gray-100 text-gray-700 text-xs font-black uppercase tracking-widest"
+                        onClick={() => { setName(''); setPrice(''); setCategory(''); setProductColors(''); setProductSizes(''); setSupplierId(''); setImageBase64(''); setPreview(''); setQuantity('') }}
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <div>
+                      <h3 className="text-lg font-black uppercase tracking-widest text-gray-900">Control de devoluciones</h3>
+                      <p className="text-sm text-gray-500">Registra la devolución y suma stock al producto.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded-2xl bg-gray-100 text-gray-700 text-xs font-black uppercase tracking-widest"
+                      onClick={() => refreshReturns().catch(() => setReturnsLog([]))}
+                    >
+                      Actualizar
+                    </button>
+                  </div>
+
+                  <form onSubmit={registerReturn} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Nombre del producto</label>
+                      <input
+                        value={returnDraft.productName}
+                        onChange={(e) => setReturnDraft(prev => ({ ...prev, productName: e.target.value }))}
+                        className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                        placeholder="Ej: Remera JJ"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Cantidad</label>
+                      <input
+                        value={returnDraft.qty}
+                        onChange={(e) => setReturnDraft(prev => ({ ...prev, qty: e.target.value }))}
+                        type="number"
+                        min="1"
+                        className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Pedido (opcional)</label>
+                      <input
+                        value={returnDraft.orderId}
+                        onChange={(e) => setReturnDraft(prev => ({ ...prev, orderId: e.target.value }))}
+                        className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                        placeholder="#1234"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Motivo (opcional)</label>
+                      <input
+                        value={returnDraft.reason}
+                        onChange={(e) => setReturnDraft(prev => ({ ...prev, reason: e.target.value }))}
+                        className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                        placeholder="Ej: Cambio de talle / Falla / Arrepentimiento"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <button
+                        type="submit"
+                        disabled={isRegisteringReturn}
+                        className={`w-full px-5 py-3 rounded-2xl bg-emerald-600 text-white text-xs font-black uppercase tracking-widest ${isRegisteringReturn ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {isRegisteringReturn ? 'Guardando...' : 'Registrar devolución'}
+                      </button>
+                    </div>
+                  </form>
+
+                  {(() => {
+                    const term = (returnsSearch || '').toLowerCase()
+                    const fromTs = returnsFrom ? new Date(`${returnsFrom}T00:00:00`).getTime() : null
+                    const toTs = returnsTo ? new Date(`${returnsTo}T23:59:59`).getTime() : null
+                    const filtered = (Array.isArray(returnsLog) ? returnsLog : []).filter(r => {
+                      const rawTs = r?.created_at ? new Date(r.created_at).getTime() : null
+                      if (fromTs != null && rawTs != null && rawTs < fromTs) return false
+                      if (toTs != null && rawTs != null && rawTs > toTs) return false
+                      if (!term) return true
+                      const hay = [
+                        r?.product_name,
+                        r?.product_id,
+                        r?.order_id,
+                        r?.reason,
+                        r?.created_by_name,
+                        r?.created_by_email,
+                      ].map(x => String(x || '').toLowerCase()).join(' ')
+                      return hay.includes(term)
+                    })
+
+                    return (
+                      <div className="mt-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Buscar</label>
+                            <input
+                              value={returnsSearch}
+                              onChange={(e) => setReturnsSearch(e.target.value)}
+                              className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                              placeholder="Producto / pedido / motivo / usuario"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Desde</label>
+                            <input
+                              value={returnsFrom}
+                              onChange={(e) => setReturnsFrom(e.target.value)}
+                              type="date"
+                              className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Hasta</label>
+                            <input
+                              value={returnsTo}
+                              onChange={(e) => setReturnsTo(e.target.value)}
+                              type="date"
+                              className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-4 overflow-x-auto">
+                          <table className="min-w-full text-sm">
+                            <thead>
+                              <tr className="text-left border-b">
+                                <th className="py-2 px-2">Fecha</th>
+                                <th className="py-2 px-2">Producto</th>
+                                <th className="py-2 px-2">Cant.</th>
+                                <th className="py-2 px-2">Pedido</th>
+                                <th className="py-2 px-2">Motivo</th>
+                                <th className="py-2 px-2">Usuario</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filtered.slice(0, 10).map(r => (
+                                <tr key={r.id} className="border-b align-top">
+                                  <td className="py-2 px-2 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleString() : '-'}</td>
+                                  <td className="py-2 px-2">{r.product_name || `Producto ${r.product_id}`}</td>
+                                  <td className="py-2 px-2 font-black">{Number(r.qty) || 0}</td>
+                                  <td className="py-2 px-2">{r.order_id || '-'}</td>
+                                  <td className="py-2 px-2">{r.reason || '-'}</td>
+                                  <td className="py-2 px-2">{(r.created_by_name || r.created_by_email) ? `${r.created_by_name || ''}${r.created_by_email ? ` (${r.created_by_email})` : ''}` : '-'}</td>
+                                </tr>
+                              ))}
+                              {filtered.length === 0 && (
+                                <tr><td colSpan={6} className="py-6 text-center text-gray-500">Sin devoluciones para el filtro aplicado.</td></tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                </div>
+              </div>
+            )}
+
             <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-4">
-              <div className={`grid grid-cols-1 ${isStock ? '' : 'lg:grid-cols-[240px_minmax(0,1fr)]'} gap-4`}>
-                {!isStock && (
+              <div className={`grid grid-cols-1 ${(isStock || isAdmin) ? '' : 'lg:grid-cols-[240px_minmax(0,1fr)]'} gap-4`}>
+                {!(isStock || isAdmin) && (
                   <div className="space-y-2">
                     {[
                       { id: 'inventario', label: 'Inventario' },
@@ -3555,8 +4055,8 @@ export default function AdminPanel() {
 
         {/* Usuarios */}
         {activeTab === 'dashboard' && isAdmin && (
-          <div className="bg-white p-5 rounded-lg shadow-sm mt-6">
-            <h2 className="text-xl font-semibold mb-3">Usuarios</h2>
+          <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 mt-6">
+            <h2 className="text-sm font-black uppercase tracking-widest text-gray-500 mb-3">Usuarios</h2>
             {(!Array.isArray(users) || users.length === 0) && <p className="text-gray-600">Sin usuarios.</p>}
             <div className="divide-y">
               {Array.isArray(users) && users.map(u => (
@@ -3570,12 +4070,12 @@ export default function AdminPanel() {
 
         {/* Ventas recientes */}
         {activeTab === 'dashboard' && isAdmin && (
-          <div className="bg-white p-5 rounded-lg shadow-sm mt-6">
-            <h2 className="text-xl font-semibold mb-3">Ventas recientes</h2>
+          <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 mt-6">
+            <h2 className="text-sm font-black uppercase tracking-widest text-gray-500 mb-3">Ventas recientes</h2>
             {salesLog.length === 0 && <p className="text-gray-600">Sin ventas registradas.</p>}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {Array.isArray(salesLog) && salesLog.map(v => (
-                <div key={v.id} className="border border-gray-300 rounded p-3 text-slate-900">
+                <div key={v.id} className="bg-gray-50 border border-gray-100 rounded-2xl p-4 text-slate-900">
                   <div className="font-semibold">{v.name}</div>
                   <div className="text-sm text-gray-600">Cant: {v.quantity} · Total: ${v.total}</div>
                   <div className="text-xs text-gray-500">{new Date(v.ts).toLocaleString()}</div>
@@ -3587,34 +4087,84 @@ export default function AdminPanel() {
 
         {/* Pedidos */}
         {activeTab === 'orders' && (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Gestión de Pedidos</h2>
-            </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm mb-4">
-              <h3 className="text-lg font-semibold mb-3">Crear Pedido</h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <input value={newOrder.customer} onChange={e=>setNewOrder(v=>({ ...v, customer: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Cliente" />
-                <input value={newOrder.productName} onChange={e=>setNewOrder(v=>({ ...v, productName: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Producto (texto)" />
-                <input type="number" min="1" value={newOrder.quantity} onChange={e=>setNewOrder(v=>({ ...v, quantity: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Cantidad" />
-                <button className="px-3 py-2 bg-brandBlue text-white rounded" onClick={createOrder}>Crear</button>
+          <div className="space-y-5">
+            {(isAdmin || isSeller) && (
+              <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+                <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em] mb-4">Crear pedido</div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <input value={newOrder.customer} onChange={e=>setNewOrder(v=>({ ...v, customer: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Cliente" />
+                  <input value={newOrder.productName} onChange={e=>setNewOrder(v=>({ ...v, productName: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Producto (texto)" />
+                  <input type="number" min="1" value={newOrder.quantity} onChange={e=>setNewOrder(v=>({ ...v, quantity: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Cantidad" />
+                  <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors" onClick={createOrder}>Crear</button>
+                </div>
               </div>
-            </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm mb-4">
-              <h3 className="text-lg font-semibold mb-3">Registrar Venta Directa</h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <input value={orderSale.name} onChange={e=>setOrderSale(v=>({ ...v, name: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Nombre exacto del producto" />
-                <input type="number" min="1" value={orderSale.quantity} onChange={e=>setOrderSale(v=>({ ...v, quantity: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Cantidad" />
-                <button className="px-3 py-2 bg-[#10B981] text-white rounded" onClick={registerSaleByName}>Registrar</button>
+            )}
+            {(isAdmin || isSeller) && (
+              <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+                <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em] mb-4">Registrar venta directa</div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <input value={orderSale.name} onChange={e=>setOrderSale(v=>({ ...v, name: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900 md:col-span-2" placeholder="Nombre exacto del producto" />
+                  <input type="number" min="1" value={orderSale.quantity} onChange={e=>setOrderSale(v=>({ ...v, quantity: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Cantidad" />
+                  <button className="px-4 py-3 rounded-2xl bg-emerald-600 text-white text-xs font-black uppercase tracking-widest hover:bg-emerald-500 transition-colors" onClick={registerSaleByName}>Registrar</button>
+                </div>
+                <p className="mt-2 text-xs text-gray-600">Busca por nombre exacto en el listado de productos.</p>
               </div>
-              <p className="mt-2 text-xs text-gray-600">Busca por nombre exacto en el listado de productos.</p>
-            </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
-              <h3 className="text-lg font-semibold mb-3">Listado de Pedidos</h3>
-              {orders.length===0 && <p className="text-gray-600">Sin pedidos registrados.</p>}
-              <div className="space-y-3">
-                {orders.map(o=> (
-                  <div key={o.id} className="border border-gray-300 rounded p-4">
+            )}
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+                <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em]">Listado de pedidos</div>
+                {isSeller && (
+                  <div className="text-xs font-black uppercase tracking-widest text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-2xl px-3 py-2 w-fit">
+                    Listos para envío: {orders.filter(o => String(o.status || '').toLowerCase() === 'listo').length}
+                  </div>
+                )}
+                {isStock && (
+                  <div className="text-xs font-black uppercase tracking-widest text-blue-700 bg-blue-50 border border-blue-200 rounded-2xl px-3 py-2 w-fit">
+                    Para preparar: {orders.filter(o => String(o.status || '').toLowerCase() === 'preparando').length}
+                  </div>
+                )}
+              </div>
+              {(() => {
+                const perPage = 5
+                const totalPages = Math.max(1, Math.ceil(orders.length / perPage))
+                const safePage = Math.max(0, Math.min(ordersPage, totalPages - 1))
+                const pagedOrders = orders.slice(safePage * perPage, safePage * perPage + perPage)
+                return (
+                  <>
+                    {orders.length===0 ? (
+                      <p className="text-gray-600">Sin pedidos registrados.</p>
+                    ) : (
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div className="text-xs text-gray-600">
+                          {`Mostrando ${Math.min(safePage * perPage + 1, orders.length)}-${Math.min(safePage * perPage + perPage, orders.length)} de ${orders.length}`}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest ${safePage <= 0 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                            onClick={() => setOrdersPage(p => Math.max(0, p - 1))}
+                            disabled={safePage <= 0}
+                          >
+                            Anterior
+                          </button>
+                          <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                            {`${safePage + 1}/${totalPages}`}
+                          </div>
+                          <button
+                            type="button"
+                            className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest ${safePage >= totalPages - 1 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                            onClick={() => setOrdersPage(p => Math.min(totalPages - 1, p + 1))}
+                            disabled={safePage >= totalPages - 1}
+                          >
+                            Siguiente
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      {pagedOrders.map(o=> (
+                        <div key={o.id} className="bg-gray-50 border border-gray-100 rounded-[2rem] p-5">
                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                       <div className="min-w-0">
                         <div className="font-semibold text-slate-900">Pedido #{o.id}</div>
@@ -3638,64 +4188,300 @@ export default function AdminPanel() {
                             </span>
                           </div>
                         </div>
-                        <div className="mt-2 text-sm text-gray-600">
-                          {o.items.map(i=> `${i.name} x${i.qty}`).join(', ')}
+                        <div className="mt-3">
+                          <div className="text-xs font-semibold text-gray-700 mb-1">Items</div>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead>
+                                <tr className="text-left border-b">
+                                  <th className="py-1 pr-4">Producto</th>
+                                  <th className="py-1 pr-4">Color</th>
+                                  <th className="py-1 pr-4">Talle</th>
+                                  <th className="py-1 pr-2">Cantidad</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(Array.isArray(o.items) ? o.items : []).map((i, idx) => (
+                                  <tr key={`${o.id}-${idx}`} className="border-b last:border-b-0">
+                                    <td className="py-1 pr-4 font-medium">{i.name || '—'}</td>
+                                    <td className="py-1 pr-4">{i.color || '—'}</td>
+                                    <td className="py-1 pr-4">{i.talle || '—'}</td>
+                                    <td className="py-1 pr-2">{i.qty ?? i.quantity ?? 1}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
                         {o.shipping?.tracking && (
                           <div className="text-xs text-emerald-600 mt-1">Seguimiento: {o.shipping.tracking}{o.shipping.carrier ? ` (${o.shipping.carrier})` : ''}</div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-sm">Estado:</span>
-                        <select defaultValue={o.status} onChange={e=>updateOrderStatus(o.id, e.target.value)} className="border border-gray-300 rounded p-1">
-                          <option value="pendiente">Pendiente</option>
-                          <option value="preparando">Preparando</option>
-                          <option value="enviado">Enviado</option>
-                          <option value="entregado">Entregado</option>
-                          <option value="cancelado">Cancelado</option>
-                        </select>
+                      <div className="flex flex-col items-start gap-2 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">Estado:</span>
+                          {isAdmin ? (
+                            <select defaultValue={o.status} onChange={e=>updateOrderStatus(o.id, e.target.value)} className="bg-white border border-gray-100 rounded-2xl px-3 py-2 text-sm font-bold text-gray-900">
+                              <option value="pendiente">Pendiente</option>
+                              <option value="preparando">Preparando</option>
+                              <option value="listo">Listo</option>
+                              <option value="enviado">Enviado</option>
+                              <option value="entregado">Entregado</option>
+                              <option value="cancelado">Cancelado</option>
+                            </select>
+                          ) : (
+                            <span className="text-sm font-semibold text-slate-900">{String(o.status || 'pendiente')}</span>
+                          )}
+                        </div>
+                        {isSeller && String(o.status || '').toLowerCase() === 'pendiente' && (
+                          <button type="button" className="px-4 py-3 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-500 transition-colors" onClick={() => updateOrderStatus(o.id, 'preparando')}>
+                            Enviar a stock
+                          </button>
+                        )}
+                        {isStock && String(o.status || '').toLowerCase() === 'preparando' && (
+                          <button type="button" className="px-4 py-3 bg-emerald-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-emerald-500 transition-colors" onClick={() => updateOrderStatus(o.id, 'listo')}>
+                            Marcar listo
+                          </button>
+                        )}
+                        {isSeller && String(o.status || '').toLowerCase() === 'listo' && (
+                          <button type="button" className="px-4 py-3 bg-brandNav text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-[#1E3A8A] transition-colors" onClick={() => updateOrderStatus(o.id, 'enviado')}>
+                            Marcar enviado
+                          </button>
+                        )}
                       </div>
                     </div>
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].recipient != null) ? shipmentForms[o.id].recipient : (o.shipping?.recipient || '')} onChange={e=>updateShipmentForm(o.id,'recipient',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Destinatario" />
-                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].address != null) ? shipmentForms[o.id].address : (o.shipping?.address || '')} onChange={e=>updateShipmentForm(o.id,'address',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Dirección" />
-                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].province != null) ? shipmentForms[o.id].province : (o.shipping?.province || '')} onChange={e=>updateShipmentForm(o.id,'province',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Provincia" />
-                      <input value={(shipmentForms[o.id] && shipmentForms[o.id].postalCode != null) ? shipmentForms[o.id].postalCode : (o.shipping?.postalCode || '')} onChange={e=>updateShipmentForm(o.id,'postalCode',e.target.value)} className="border border-gray-300 rounded p-2" placeholder="Código Postal" />
-                      <button className="px-3 py-2 bg-brandNav text-white rounded" onClick={()=>createShipmentForOrder(o.id)}>Generar Envío</button>
+                    {(isAdmin || isSeller) && (
+                      <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+                        <input value={(shipmentForms[o.id] && shipmentForms[o.id].recipient != null) ? shipmentForms[o.id].recipient : (o.shipping?.recipient || '')} onChange={e=>updateShipmentForm(o.id,'recipient',e.target.value)} className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Destinatario" />
+                        <input value={(shipmentForms[o.id] && shipmentForms[o.id].address != null) ? shipmentForms[o.id].address : (o.shipping?.address || '')} onChange={e=>updateShipmentForm(o.id,'address',e.target.value)} className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Dirección" />
+                        <input value={(shipmentForms[o.id] && shipmentForms[o.id].province != null) ? shipmentForms[o.id].province : (o.shipping?.province || '')} onChange={e=>updateShipmentForm(o.id,'province',e.target.value)} className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Provincia" />
+                        <input value={(shipmentForms[o.id] && shipmentForms[o.id].postalCode != null) ? shipmentForms[o.id].postalCode : (o.shipping?.postalCode || '')} onChange={e=>updateShipmentForm(o.id,'postalCode',e.target.value)} className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Código Postal" />
+                        <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors" onClick={()=>createShipmentForOrder(o.id)}>Generar envío</button>
+                      </div>
+                    )}
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* Devoluciones de pedidos */}
+        {activeTab === 'order-returns' && (
+          <div className="space-y-5">
+            <div className="flex items-center justify-end">
+              <button className="px-4 py-3 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors" onClick={()=>refreshOrderReturns()}>
+                Actualizar
+              </button>
+            </div>
+
+            {isSeller && (
+              <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+                <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em] mb-4">Nueva solicitud</div>
+                <form onSubmit={createOrderReturnRequest} className="grid grid-cols-1 md:grid-cols-6 gap-3">
+                  <select
+                    value={orderReturnDraft.orderId}
+                    onChange={e=>setOrderReturnDraft(v=>({ ...v, orderId: e.target.value, orderItemId: '' }))}
+                    className="bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900 md:col-span-2"
+                  >
+                    <option value="">Seleccionar pedido</option>
+                    {(Array.isArray(orders) ? orders : []).map(o => (
+                      <option key={o.id} value={String(o.id)}>
+                        {`#${o.id} - ${(o.customerName || '').trim()} ${(o.customerLastName || '').trim()} ${(o.customerEmail || o.customer || '').trim()}`.trim()}
+                      </option>
+                    ))}
+                  </select>
+
+                  {(() => {
+                    const selectedOrder = (Array.isArray(orders) ? orders : []).find(o => String(o.id) === String(orderReturnDraft.orderId)) || null
+                    const items = Array.isArray(selectedOrder?.items) ? selectedOrder.items : []
+                    const selectedItem = items.find(it => String(it.id) === String(orderReturnDraft.orderItemId)) || null
+                    const maxQty = selectedItem ? Number(selectedItem.qty ?? selectedItem.quantity ?? 0) || 0 : 0
+                    return (
+                      <>
+                        <select
+                          value={orderReturnDraft.orderItemId}
+                          onChange={e=>setOrderReturnDraft(v=>({ ...v, orderItemId: e.target.value }))}
+                          className="bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900 md:col-span-2"
+                          disabled={!orderReturnDraft.orderId}
+                        >
+                          <option value="">{orderReturnDraft.orderId ? 'Seleccionar item' : 'Elegí un pedido'}</option>
+                          {items.map((i, idx) => (
+                            <option key={`${i.id ?? idx}`} value={String(i.id ?? '')}>
+                              {`${i.name || '—'}${i.color ? ` / ${i.color}` : ''}${i.talle ? ` / ${i.talle}` : ''} (máx ${i.qty ?? i.quantity ?? 1})`}
+                            </option>
+                          ))}
+                        </select>
+
+                        <input
+                          value={orderReturnDraft.qty}
+                          onChange={e=>setOrderReturnDraft(v=>({ ...v, qty: e.target.value }))}
+                          className="bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900"
+                          type="number"
+                          min="1"
+                          max={maxQty > 0 ? String(maxQty) : undefined}
+                          placeholder="Cantidad"
+                          disabled={!orderReturnDraft.orderItemId}
+                        />
+                      </>
+                    )
+                  })()}
+
+                  <input
+                    value={orderReturnDraft.reason}
+                    onChange={e=>setOrderReturnDraft(v=>({ ...v, reason: e.target.value }))}
+                    className="bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900 md:col-span-2"
+                    placeholder="Motivo (opcional)"
+                  />
+
+                  <button
+                    className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors md:col-span-2 disabled:opacity-60"
+                    disabled={isCreatingOrderReturn}
+                  >
+                    {isCreatingOrderReturn ? 'Enviando...' : 'Solicitar devolución'}
+                  </button>
+                </form>
               </div>
+            )}
+
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+              {(() => {
+                const list = Array.isArray(orderReturns) ? orderReturns : []
+                const visible = list.filter(r => {
+                  const st = String(r?.status || '').toLowerCase()
+                  if (isStock) return st === 'aprobada'
+                  if (isSeller) return st === 'solicitada' || st === 'recibida' || st === 'reembolsada' || st === 'rechazada'
+                  return true
+                })
+                const statusRank = (status) => {
+                  const st = String(status || '').toLowerCase()
+                  if (st === 'solicitada') return 0
+                  if (st === 'aprobada') return 1
+                  if (st === 'recibida') return 2
+                  if (st === 'reembolsada') return 99
+                  if (st === 'rechazada') return 100
+                  return 50
+                }
+                const sorted = [...visible].sort((a, b) => {
+                  const ra = statusRank(a?.status)
+                  const rb = statusRank(b?.status)
+                  if (ra !== rb) return ra - rb
+                  const ta = new Date(a?.created_at || a?.createdAt || 0).getTime()
+                  const tb = new Date(b?.created_at || b?.createdAt || 0).getTime()
+                  if (tb !== ta) return tb - ta
+                  return (Number(b?.id) || 0) - (Number(a?.id) || 0)
+                })
+
+                if (sorted.length === 0) return <p className="text-gray-600">Sin devoluciones para mostrar.</p>
+
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="text-left border-b">
+                          <th className="py-2 pr-4">Pedido</th>
+                          <th className="py-2 pr-4">Cliente</th>
+                          <th className="py-2 pr-4">Producto</th>
+                          <th className="py-2 pr-4">Color</th>
+                          <th className="py-2 pr-4">Talle</th>
+                          <th className="py-2 pr-4">Cant.</th>
+                          <th className="py-2 pr-4">Motivo</th>
+                          <th className="py-2 pr-4">Estado</th>
+                          <th className="py-2 pr-2">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sorted.map(r => {
+                          const st = String(r?.status || '').toLowerCase()
+                          const canApproveReject = isSeller && st === 'solicitada'
+                          const canReceive = isStock && st === 'aprobada'
+                          const canRefund = isSeller && st === 'recibida'
+                          return (
+                            <tr key={r.id} className="border-b last:border-b-0 align-top">
+                              <td className="py-2 pr-4 font-medium">{r.order_id ? `#${r.order_id}` : '—'}</td>
+                              <td className="py-2 pr-4">
+                                <div className="min-w-0">
+                                  <div className="font-medium text-slate-900">
+                                    {`${r.customer_name || ''} ${r.customer_lastname || ''}`.trim() || '—'}
+                                  </div>
+                                  <div className="text-xs text-gray-600 break-all">{r.customer_email || '—'}</div>
+                                </div>
+                              </td>
+                              <td className="py-2 pr-4">{r.product_name || '—'}</td>
+                              <td className="py-2 pr-4">{r.color || '—'}</td>
+                              <td className="py-2 pr-4">{r.talle || '—'}</td>
+                              <td className="py-2 pr-4">{r.qty ?? 1}</td>
+                              <td className="py-2 pr-4">{r.reason || '—'}</td>
+                              <td className="py-2 pr-4">
+                                <span className="inline-flex px-3 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest bg-gray-100 text-gray-800">
+                                  {st || '—'}
+                                </span>
+                              </td>
+                              <td className="py-2 pr-2">
+                                <div className="flex flex-col gap-2">
+                                  {canApproveReject && (
+                                    <div className="flex gap-2">
+                                      <button type="button" className="px-4 py-3 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 transition-colors" onClick={() => updateOrderReturnStatus(r.id, 'aprobada')}>
+                                        Aprobar
+                                      </button>
+                                      <button type="button" className="px-4 py-3 bg-rose-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 transition-colors" onClick={() => updateOrderReturnStatus(r.id, 'rechazada')}>
+                                        Rechazar
+                                      </button>
+                                    </div>
+                                  )}
+                                  {canReceive && (
+                                    <button type="button" className="px-4 py-3 bg-[#1E3A8A] text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-brandNav transition-colors" onClick={() => updateOrderReturnStatus(r.id, 'recibida')}>
+                                      Producto recibido
+                                    </button>
+                                  )}
+                                  {canRefund && (
+                                    <button type="button" className="px-4 py-3 bg-brandNav text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-[#1E3A8A] transition-colors" onClick={() => updateOrderReturnStatus(r.id, 'reembolsada')}>
+                                      Reembolsar
+                                    </button>
+                                  )}
+                                  {!canApproveReject && !canReceive && !canRefund && (
+                                    <span className="text-xs text-gray-500">—</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}
 
         {/* Proveedores */}
         {activeTab === 'suppliers' && (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Gestión de Proveedores</h2>
-            </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm mb-4">
-              <h3 className="text-lg font-semibold mb-3">{editingSupplierId ? 'Editar Proveedor' : 'Agregar Proveedor'}</h3>
+          <div className="space-y-5">
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+              <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em] mb-4">{editingSupplierId ? 'Editar proveedor' : 'Agregar proveedor'}</div>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                <input value={editingSupplierId ? editSupplierFields.name : newSupplier.name} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, name: e.target.value })) : setNewSupplier(v=>({ ...v, name: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Nombre" />
-                <input value={editingSupplierId ? editSupplierFields.contact : newSupplier.contact} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, contact: e.target.value })) : setNewSupplier(v=>({ ...v, contact: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Contacto" />
-                <input value={editingSupplierId ? editSupplierFields.email : newSupplier.email} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, email: e.target.value })) : setNewSupplier(v=>({ ...v, email: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Email" />
-                <input value={editingSupplierId ? editSupplierFields.phone : newSupplier.phone} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, phone: e.target.value })) : setNewSupplier(v=>({ ...v, phone: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Teléfono" />
+                <input value={editingSupplierId ? editSupplierFields.name : newSupplier.name} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, name: e.target.value })) : setNewSupplier(v=>({ ...v, name: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Nombre" />
+                <input value={editingSupplierId ? editSupplierFields.contact : newSupplier.contact} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, contact: e.target.value })) : setNewSupplier(v=>({ ...v, contact: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Contacto" />
+                <input value={editingSupplierId ? editSupplierFields.email : newSupplier.email} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, email: e.target.value })) : setNewSupplier(v=>({ ...v, email: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Email" />
+                <input value={editingSupplierId ? editSupplierFields.phone : newSupplier.phone} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, phone: e.target.value })) : setNewSupplier(v=>({ ...v, phone: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Teléfono" />
                 {editingSupplierId ? (
                   <div className="flex gap-2">
-                    <button className="px-3 py-2 bg-brandBlue text-white rounded flex-1" onClick={saveEditSupplier}>Guardar</button>
-                    <button className="px-3 py-2 bg-gray-300 rounded flex-1" onClick={()=>setEditingSupplierId(null)}>Cancelar</button>
+                    <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors flex-1" onClick={saveEditSupplier}>Guardar</button>
+                    <button className="px-4 py-3 rounded-2xl bg-gray-100 text-gray-700 text-xs font-black uppercase tracking-widest hover:bg-gray-200 transition-colors flex-1" onClick={()=>setEditingSupplierId(null)}>Cancelar</button>
                   </div>
                 ) : (
-                  <button className="px-3 py-2 bg-brandBlue text-white rounded" onClick={addSupplier}>Agregar</button>
+                  <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors" onClick={addSupplier}>Agregar</button>
                 )}
               </div>
-              <textarea value={editingSupplierId ? editSupplierFields.notes : newSupplier.notes} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, notes: e.target.value })) : setNewSupplier(v=>({ ...v, notes: e.target.value }))} className="border border-gray-300 rounded p-2 w-full mt-3" placeholder="Notas"></textarea>
+              <textarea value={editingSupplierId ? editSupplierFields.notes : newSupplier.notes} onChange={e=>editingSupplierId ? setEditSupplierFields(v=>({ ...v, notes: e.target.value })) : setNewSupplier(v=>({ ...v, notes: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900 mt-3" placeholder="Notas"></textarea>
             </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
-              <h3 className="text-lg font-semibold mb-3">Listado de Proveedores</h3>
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+              <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em] mb-4">Listado de proveedores</div>
               {suppliers.length===0 && <p className="text-gray-600">Sin proveedores registrados.</p>}
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
@@ -3706,7 +4492,7 @@ export default function AdminPanel() {
                       <th className="py-2 px-2">Contacto</th>
                       <th className="py-2 px-2">Email</th>
                       <th className="py-2 px-2">Teléfono</th>
-                      <th className="py-2 px-2">Acciones</th>
+                      {isAdmin && <th className="py-2 px-2">Acciones</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -3717,12 +4503,14 @@ export default function AdminPanel() {
                         <td className="py-2 px-2">{s.contact}</td>
                         <td className="py-2 px-2">{s.email}</td>
                         <td className="py-2 px-2">{s.phone}</td>
-                        <td className="py-2 px-2">
-                          <div className="flex gap-2">
-                            <button onClick={()=>startEditSupplier(s)} className="px-2 py-1 bg-brandNav text-white rounded text-xs">Editar</button>
-                            <button onClick={()=>deleteSupplier(s.id)} className="px-2 py-1 bg-red-600 text-white rounded text-xs">Eliminar</button>
-                          </div>
-                        </td>
+                        {isAdmin && (
+                          <td className="py-2 px-2">
+                            <div className="flex gap-2">
+                              <button onClick={()=>startEditSupplier(s)} className="px-3 py-2 bg-[#1E3A8A] text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-brandNav transition-colors">Editar</button>
+                              <button onClick={()=>deleteSupplier(s.id)} className="px-3 py-2 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-500 transition-colors">Eliminar</button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -3734,18 +4522,19 @@ export default function AdminPanel() {
 
         {/* Roles */}
         {activeTab === 'clients' && (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Gestión de Roles</h2>
-            </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm mb-4">
-              <h3 className="text-lg font-semibold mb-3">{editingClientId ? 'Editar Usuario' : 'Agregar Usuario'}</h3>
-              <p className="text-sm text-gray-600 mb-3">Desde acá podés crear accesos para el panel y asignarles el rol correspondiente.</p>
+          <div className="space-y-5">
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+                <div>
+                  <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em]">{editingClientId ? 'Editar usuario' : 'Agregar usuario'}</div>
+                  <p className="text-sm text-gray-600 mt-2">Desde acá podés crear accesos para el panel y asignarles el rol correspondiente.</p>
+                </div>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                <input value={editingClientId ? editClientFields.name : newClient.name} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, name: e.target.value })) : setNewClient(v=>({ ...v, name: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Nombre" />
-                <input value={editingClientId ? editClientFields.email : newClient.email} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, email: e.target.value })) : setNewClient(v=>({ ...v, email: e.target.value }))} className="border border-gray-300 rounded p-2" placeholder="Email" />
-                <input value={editingClientId ? editClientFields.password : newClient.password} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, password: e.target.value })) : setNewClient(v=>({ ...v, password: e.target.value }))} type="password" className="border border-gray-300 rounded p-2" placeholder={editingClientId ? 'Nueva contraseña (opcional)' : 'Contraseña'} />
-                <select value={editingClientId ? editClientFields.role : newClient.role} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, role: e.target.value })) : setNewClient(v=>({ ...v, role: e.target.value }))} className="border border-gray-300 rounded p-2">
+                <input value={editingClientId ? editClientFields.name : newClient.name} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, name: e.target.value })) : setNewClient(v=>({ ...v, name: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Nombre" />
+                <input value={editingClientId ? editClientFields.email : newClient.email} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, email: e.target.value })) : setNewClient(v=>({ ...v, email: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Email" />
+                <input value={editingClientId ? editClientFields.password : newClient.password} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, password: e.target.value })) : setNewClient(v=>({ ...v, password: e.target.value }))} type="password" className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder={editingClientId ? 'Nueva contraseña (opcional)' : 'Contraseña'} />
+                <select value={editingClientId ? editClientFields.role : newClient.role} onChange={e=>editingClientId ? setEditClientFields(v=>({ ...v, role: e.target.value })) : setNewClient(v=>({ ...v, role: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900">
                   {panelRoleOptions.map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
@@ -3756,16 +4545,16 @@ export default function AdminPanel() {
                 </div>
                 {editingClientId ? (
                   <div className="flex gap-2">
-                    <button className="px-3 py-2 bg-brandBlue text-white rounded flex-1" onClick={saveEditClient}>Guardar</button>
-                    <button className="px-3 py-2 bg-gray-300 rounded flex-1" onClick={()=>{ setEditingClientId(null); setEditClientFields({ name: '', email: '', password: '', is_verified: false, role: 'vendedor' }) }}>Cancelar</button>
+                    <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors flex-1" onClick={saveEditClient}>Guardar</button>
+                    <button className="px-4 py-3 rounded-2xl bg-gray-100 text-gray-700 text-xs font-black uppercase tracking-widest hover:bg-gray-200 transition-colors flex-1" onClick={()=>{ setEditingClientId(null); setEditClientFields({ name: '', email: '', password: '', is_verified: false, role: 'vendedor' }) }}>Cancelar</button>
                   </div>
                 ) : (
-                  <button className="px-3 py-2 bg-brandBlue text-white rounded" onClick={addClient}>Agregar</button>
+                  <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors" onClick={addClient}>Agregar</button>
                 )}
               </div>
             </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
-              <h3 className="text-lg font-semibold mb-3">Usuarios y Roles</h3>
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
+              <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em] mb-4">Usuarios y roles</div>
               {panelUsers.length === 0 && <p className="text-gray-600">Sin usuarios del panel registrados.</p>}
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
@@ -3791,8 +4580,8 @@ export default function AdminPanel() {
                         <td className="py-2 px-2">{formatUserRole(u.role || 'client')}</td>
                         <td className="py-2 px-2">
                           <div className="flex gap-2">
-                            <button onClick={()=>startEditClient(u)} className="px-2 py-1 bg-brandNav text-white rounded text-xs">Editar</button>
-                            <button onClick={()=>deleteClient(u.id || u.email)} className="px-2 py-1 bg-red-600 text-white rounded text-xs">Eliminar</button>
+                            <button onClick={()=>startEditClient(u)} className="px-3 py-2 bg-[#1E3A8A] text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-brandNav transition-colors">Editar</button>
+                            <button onClick={()=>deleteClient(u.id || u.email)} className="px-3 py-2 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-500 transition-colors">Eliminar</button>
                           </div>
                         </td>
                       </tr>
@@ -3804,19 +4593,16 @@ export default function AdminPanel() {
           </div>
         )}
 
-        {activeTab === 'sales-report' && (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Reporte de Ventas</h2>
-            </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm space-y-4">
+        {activeTab === 'sales-report' && isAdmin && (
+          <div className="space-y-5">
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 space-y-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold">Ventas por producto</h3>
+                <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em]">Ventas por producto</div>
                 <div className="flex gap-2">
-                  <button className="px-3 py-2 bg-brandBlue text-white rounded" onClick={printSalesReport} disabled={reportLoading}>
+                  <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors disabled:opacity-60" onClick={printSalesReport} disabled={reportLoading}>
                     Descargar PDF
                   </button>
-                  <button className="px-3 py-2 bg-slate-700 text-white rounded" onClick={loadReports} disabled={reportLoading}>
+                  <button className="px-4 py-3 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:opacity-60" onClick={loadReports} disabled={reportLoading}>
                     {reportLoading ? 'Cargando...' : 'Actualizar'}
                   </button>
                 </div>
@@ -3825,22 +4611,22 @@ export default function AdminPanel() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Desde (opcional)</label>
-                  <input type="date" value={reportRange.from} onChange={e=>setReportRange(v=>({ ...v, from: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input type="date" value={reportRange.from} onChange={e=>setReportRange(v=>({ ...v, from: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Hasta (opcional)</label>
-                  <input type="date" value={reportRange.to} onChange={e=>setReportRange(v=>({ ...v, to: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input type="date" value={reportRange.to} onChange={e=>setReportRange(v=>({ ...v, to: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
                 <div className="flex items-end">
-                  <button className="w-full px-3 py-2 bg-slate-900 text-white rounded" onClick={loadReports} disabled={reportLoading}>
+                  <button className="w-full px-4 py-3 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:opacity-60" onClick={loadReports} disabled={reportLoading}>
                     Generar Reporte
                   </button>
                 </div>
               </div>
 
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="p-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <div className="font-semibold">Productos vendidos</div>
+              <div className="border border-gray-100 rounded-[2rem] overflow-hidden">
+                <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                  <div className="text-xs font-black uppercase tracking-widest text-gray-600">Productos vendidos</div>
                   <div className="text-xs text-gray-600">{(reportData.sold || []).length} items</div>
                 </div>
                 <div className="overflow-x-auto">
@@ -3871,19 +4657,16 @@ export default function AdminPanel() {
           </div>
         )}
 
-        {activeTab === 'stock-report' && (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Reporte de Stock</h2>
-            </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm space-y-4">
+        {activeTab === 'stock-report' && isAdmin && (
+          <div className="space-y-5">
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 space-y-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold">Stock bajo</h3>
+                <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em]">Stock bajo</div>
                 <div className="flex gap-2">
-                  <button className="px-3 py-2 bg-slate-700 text-white rounded" onClick={loadReports} disabled={reportLoading}>
+                  <button className="px-4 py-3 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:opacity-60" onClick={loadReports} disabled={reportLoading}>
                     {reportLoading ? 'Cargando...' : 'Actualizar'}
                   </button>
-                  <button className="px-3 py-2 bg-brandBlue text-white rounded" onClick={printStockReport} disabled={reportLoading}>
+                  <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors disabled:opacity-60" onClick={printStockReport} disabled={reportLoading}>
                     Descargar PDF
                   </button>
                 </div>
@@ -3892,18 +4675,18 @@ export default function AdminPanel() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Stock bajo (≤)</label>
-                  <input type="number" min="0" value={settings.minStock} onChange={e=>setSettings(v=>({ ...v, minStock: Number(e.target.value)||0 }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input type="number" min="0" value={settings.minStock} onChange={e=>setSettings(v=>({ ...v, minStock: Number(e.target.value)||0 }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
                 <div className="flex items-end">
-                  <button className="w-full px-3 py-2 bg-slate-900 text-white rounded" onClick={loadReports} disabled={reportLoading}>
+                  <button className="w-full px-4 py-3 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:opacity-60" onClick={loadReports} disabled={reportLoading}>
                     Generar Reporte
                   </button>
                 </div>
               </div>
 
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="p-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <div className="font-semibold">Productos faltantes (stock bajo)</div>
+              <div className="border border-gray-100 rounded-[2rem] overflow-hidden">
+                <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                  <div className="text-xs font-black uppercase tracking-widest text-gray-600">Productos faltantes</div>
                   <div className="text-xs text-gray-600">{(reportData.faltantes || []).length} items</div>
                 </div>
                 <div className="overflow-x-auto">
@@ -3936,62 +4719,61 @@ export default function AdminPanel() {
 
         {/* Configuración */}
         {activeTab === 'settings' && (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Configuración</h2>
-              <button className="px-3 py-2 bg-brandBlue text-white rounded" onClick={saveSettings}>Guardar</button>
+          <div className="space-y-5">
+            <div className="flex items-center justify-end">
+              <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors" onClick={saveSettings}>Guardar</button>
             </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Stock mínimo crítico</label>
-                  <input type="number" min="0" value={settings.minStock} onChange={e=>setSettings(v=>({ ...v, minStock: Number(e.target.value)||0 }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input type="number" min="0" value={settings.minStock} onChange={e=>setSettings(v=>({ ...v, minStock: Number(e.target.value)||0 }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Nombre admin</label>
-                  <input value={settings.adminName} onChange={e=>setSettings(v=>({ ...v, adminName: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input value={settings.adminName} onChange={e=>setSettings(v=>({ ...v, adminName: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Email admin</label>
-                  <input value={settings.adminEmail} onChange={e=>setSettings(v=>({ ...v, adminEmail: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input value={settings.adminEmail} onChange={e=>setSettings(v=>({ ...v, adminEmail: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Contraseña admin</label>
-                  <input type="password" value={settings.adminPassword} onChange={e=>setSettings(v=>({ ...v, adminPassword: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input type="password" value={settings.adminPassword} onChange={e=>setSettings(v=>({ ...v, adminPassword: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
               </div>
-              <div className="mt-6 border-t pt-6">
-                <h3 className="text-lg font-semibold mb-3">Datos de la empresa (membrete)</h3>
+              <div className="mt-6 border-t border-gray-100 pt-6">
+                <div className="text-[10px] text-gray-500 font-black uppercase tracking-[0.35em] mb-4">Datos de la empresa (membrete)</div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="md:col-span-2">
                     <label className="block text-sm text-gray-700">Nombre de la empresa</label>
-                    <input value={settings.companyName} onChange={e=>setSettings(v=>({ ...v, companyName: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" placeholder="JJ Indumentaria" />
+                    <input value={settings.companyName} onChange={e=>setSettings(v=>({ ...v, companyName: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="JJ Indumentaria" />
                   </div>
                   <div>
                     <label className="block text-sm text-gray-700">CUIT</label>
-                    <input value={settings.companyCuit} onChange={e=>setSettings(v=>({ ...v, companyCuit: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" placeholder="XX-XXXXXXXX-X" />
+                    <input value={settings.companyCuit} onChange={e=>setSettings(v=>({ ...v, companyCuit: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="XX-XXXXXXXX-X" />
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-sm text-gray-700">Dirección</label>
-                    <input value={settings.companyAddress} onChange={e=>setSettings(v=>({ ...v, companyAddress: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" placeholder="Calle 123" />
+                    <input value={settings.companyAddress} onChange={e=>setSettings(v=>({ ...v, companyAddress: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Calle 123" />
                   </div>
                   <div>
                     <label className="block text-sm text-gray-700">Ciudad / Provincia</label>
-                    <input value={settings.companyCity} onChange={e=>setSettings(v=>({ ...v, companyCity: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" placeholder="Buenos Aires" />
+                    <input value={settings.companyCity} onChange={e=>setSettings(v=>({ ...v, companyCity: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Buenos Aires" />
                   </div>
                   <div>
                     <label className="block text-sm text-gray-700">Teléfono</label>
-                    <input value={settings.companyPhone} onChange={e=>setSettings(v=>({ ...v, companyPhone: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" placeholder="+54 9 ..." />
+                    <input value={settings.companyPhone} onChange={e=>setSettings(v=>({ ...v, companyPhone: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="+54 9 ..." />
                   </div>
                   <div>
                     <label className="block text-sm text-gray-700">Email empresa</label>
-                    <input value={settings.companyEmail} onChange={e=>setSettings(v=>({ ...v, companyEmail: e.target.value }))} className="border border-gray-300 rounded p-2 w-full" placeholder="contacto@..." />
+                    <input value={settings.companyEmail} onChange={e=>setSettings(v=>({ ...v, companyEmail: e.target.value }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="contacto@..." />
                   </div>
                   <div className="md:col-span-3">
                     <label className="block text-sm text-gray-700">Logo (archivo)</label>
-                    <input type="file" accept="image/*" onChange={onCompanyLogoChange} className="border border-gray-300 rounded p-2 w-full" />
+                    <input type="file" accept="image/*" onChange={onCompanyLogoChange} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                     {settings.companyLogo ? (
-                      <img src={settings.companyLogo} alt="logo empresa" className="mt-3 w-40 h-40 object-cover rounded-lg border border-gray-200" />
+                      <img src={settings.companyLogo} alt="logo empresa" className="mt-3 w-40 h-40 object-cover rounded-2xl border border-gray-100 bg-white" />
                     ) : (
                       <p className="text-xs text-gray-500 mt-2">Sin logo cargado.</p>
                     )}
@@ -4004,22 +4786,21 @@ export default function AdminPanel() {
 
         {/* Inicio (Home) */}
         {activeTab === 'home' && (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Inicio</h2>
-              <button className="px-3 py-2 bg-brandBlue text-white rounded" onClick={saveHomeCfg}>Guardar</button>
+          <div className="space-y-5">
+            <div className="flex items-center justify-end">
+              <button className="px-4 py-3 rounded-2xl bg-[#1E3A8A] text-white text-xs font-black uppercase tracking-widest hover:bg-brandNav transition-colors" onClick={saveHomeCfg}>Guardar</button>
             </div>
-            <div className="bg-white text-slate-900 p-5 rounded-lg shadow-sm">
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6">
               <p className="text-sm text-gray-700 mb-3">Configura las imágenes y textos del carrusel de la portada.</p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[0,1,2].map(i => (
-                  <div key={i} className="border border-gray-200 rounded p-3">
+                  <div key={i} className="bg-gray-50 border border-gray-100 rounded-[2rem] p-4">
                     <label className="block text-sm text-gray-700">Imagen {i+1} (archivo)</label>
-                    <input type="file" accept="image/*" onChange={(e)=>onHomeImageFileChange(i, e)} className="border border-gray-300 rounded p-2 w-full" />
+                    <input type="file" accept="image/*" onChange={(e)=>onHomeImageFileChange(i, e)} className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-sm font-bold text-gray-900" />
                     <label className="block text-sm text-gray-700 mt-2">Imagen {i+1} (ruta o URL)</label>
-                    <input value={homeCfg.images[i] || ''} onChange={e=>onHomeImageUrlChange(i, e.target.value)} className="border border-gray-300 rounded p-2 w-full" placeholder="/img/mi-imagen.jpg" />
+                    <input value={homeCfg.images[i] || ''} onChange={e=>onHomeImageUrlChange(i, e.target.value)} className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="/img/mi-imagen.jpg" />
                     {homeCfg.images[i] ? (
-                      <img src={homeCfg.images[i]} alt={`Slide ${i+1}`} className="mt-2 w-full h-32 object-cover rounded" />
+                      <img src={homeCfg.images[i]} alt={`Slide ${i+1}`} className="mt-2 w-full h-32 object-cover rounded-2xl border border-gray-100 bg-white" />
                     ) : (
                       <p className="mt-2 text-xs text-gray-500">Sin imagen seleccionada</p>
                     )}
@@ -4027,9 +4808,9 @@ export default function AdminPanel() {
                     <input value={homeCfg.captions[i] || ''} onChange={e=>{
                       const v = e.target.value
                       setHomeCfg(cfg => ({ ...cfg, captions: cfg.captions.map((x, idx) => idx===i ? v : x) }))
-                    }} className="border border-gray-300 rounded p-2 w-full" placeholder="Texto descriptivo" />
+                    }} className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-sm font-bold text-gray-900" placeholder="Texto descriptivo" />
                     <div className="mt-2 flex gap-2">
-                      <button type="button" className="px-2 py-1 text-xs bg-gray-200 rounded" onClick={()=>setHomeCfg(cfg=>({ ...cfg, images: cfg.images.map((x, idx)=> idx===i ? '' : x) }))}>Quitar</button>
+                      <button type="button" className="px-4 py-3 rounded-2xl bg-gray-100 text-gray-700 text-[10px] font-black uppercase tracking-widest hover:bg-gray-200 transition-colors" onClick={()=>setHomeCfg(cfg=>({ ...cfg, images: cfg.images.map((x, idx)=> idx===i ? '' : x) }))}>Quitar</button>
                     </div>
                   </div>
                 ))}
@@ -4037,7 +4818,7 @@ export default function AdminPanel() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
                 <div>
                   <label className="block text-sm text-gray-700">Intervalo (ms)</label>
-                  <input type="number" min="1000" max="60000" value={homeCfg.intervalMs} onChange={e=>setHomeCfg(cfg => ({ ...cfg, intervalMs: Number(e.target.value)||3000 }))} className="border border-gray-300 rounded p-2 w-full" />
+                  <input type="number" min="1000" max="60000" value={homeCfg.intervalMs} onChange={e=>setHomeCfg(cfg => ({ ...cfg, intervalMs: Number(e.target.value)||3000 }))} className="w-full bg-gray-50 border-none rounded-2xl p-3 text-sm font-bold text-gray-900" />
                 </div>
                 <div className="flex items-center gap-2 mt-6">
                   <input type="checkbox" checked={!!homeCfg.pauseOnHover} onChange={e=>setHomeCfg(cfg => ({ ...cfg, pauseOnHover: e.target.checked }))} />

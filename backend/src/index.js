@@ -53,6 +53,7 @@ function getOrderStatusLabel(status) {
   const s = String(status || '').toLowerCase();
   if (s === 'pendiente') return 'Pendiente';
   if (s === 'preparando') return 'Preparando';
+  if (s === 'listo') return 'Listo para envío';
   if (s === 'enviado') return 'Enviado';
   if (s === 'entregado') return 'Entregado';
   if (s === 'cancelado') return 'Cancelado';
@@ -364,6 +365,8 @@ const memory = {
     { id: 18, title: 'Promo 13% OFF', name: 'Promo 13% OFF', description: 'Remeras destacadas', image: '/img/promo18.webp', price: 24300, discount: 13, sizes: 'S,M,L,XL' },
   ],
   sales: [],
+  returns: [],
+  orderReturns: [],
   carts: {}, // carts[userId] = [{ id, name, price, image, quantity, color?, talle?, description? }]
   orders: [], // { id, customer, items:[{id,name,qty,price}], status:'pendiente'|'preparando'|'enviado'|'entregado', ts }
   suppliers: [], // { id, name, contact, email, phone, notes }
@@ -426,6 +429,8 @@ function safePersistState() {
       savedAt: new Date().toISOString(),
       users: safeUsers,
       sales: Array.isArray(memory.sales) ? memory.sales.slice(-5000) : [],
+      returns: Array.isArray(memory.returns) ? memory.returns.slice(0, 2000) : [],
+      orderReturns: Array.isArray(memory.orderReturns) ? memory.orderReturns.slice(0, 2000) : [],
       adminTokens: Array.from(memory.admin.tokens || []),
       adminSessions: Object.fromEntries(memory.admin.sessions || new Map()),
       products: Array.isArray(memory.products) ? memory.products : [],
@@ -448,6 +453,8 @@ function loadPersistState() {
     if (parsed && typeof parsed === 'object') {
       if (parsed.users && typeof parsed.users === 'object') memory.users = parsed.users;
       if (Array.isArray(parsed.sales)) memory.sales = parsed.sales;
+      if (Array.isArray(parsed.returns)) memory.returns = parsed.returns;
+      if (Array.isArray(parsed.orderReturns)) memory.orderReturns = parsed.orderReturns;
       if (Array.isArray(parsed.adminTokens)) memory.admin.tokens = new Set(parsed.adminTokens);
       if (parsed.adminSessions && typeof parsed.adminSessions === 'object') {
         memory.admin.sessions = new Map(Object.entries(parsed.adminSessions));
@@ -519,10 +526,12 @@ function requireRoles(...allowedRoles) {
 
 const requireAdmin = requireRoles('admin');
 const requireSalesAccess = requireRoles('admin', 'vendedor');
+const requireOrdersAccess = requireRoles('admin', 'vendedor', 'stock');
 const requireProductsView = requireRoles('admin', 'vendedor', 'stock');
-const requireProductManagement = requireRoles('admin', 'vendedor');
+const requireProductManagement = requireRoles('admin', 'vendedor', 'stock');
 const requireInventoryAccess = requireRoles('admin', 'stock');
 const requirePromotionsAccess = requireRoles('admin', 'vendedor');
+const requireSuppliersAccess = requireRoles('admin', 'stock');
 
 app.put('/api/admin/promotions/legacy/:id/sold-out', requirePromotionsAccess, async (req, res) => {
   const id = Number(req.params.id);
@@ -871,8 +880,8 @@ async function migrateMemoryToDb() {
       if (productsCount === 0 && Array.isArray(memory.products) && memory.products.length > 0) {
         for (const p of memory.products) {
           await db.query(
-            'INSERT INTO products(name, price, image, category, quantity) VALUES(?, ?, ?, ?, ?)',
-            [p.name || '', Number(p.price || 0), p.image || '', p.category || null, Number(p.quantity || 0)]
+            'INSERT INTO products(name, price, image, category, colors, sizes, quantity) VALUES(?, ?, ?, ?, ?, ?, ?)',
+            [p.name || '', Number(p.price || 0), p.image || '', p.category || null, p.colors || '', p.sizes || '', Number(p.quantity || 0)]
           );
         }
         console.log(`Migración: productos -> ${memory.products.length} registros insertados`);
@@ -915,8 +924,16 @@ async function migrateMemoryToDb() {
           if (Array.isArray(o.items)) {
             for (const it of o.items) {
               await db.query(
-                'INSERT INTO order_items(order_id, product_id, name, qty, price) VALUES(?, ?, ?, ?, ?)',
-                [orderId, it.id != null ? Number(it.id) : null, it.name || '', Number(it.qty || it.quantity || 1), Number(it.price || 0)]
+                'INSERT INTO order_items(order_id, product_id, name, qty, price, color, talle) VALUES(?, ?, ?, ?, ?, ?, ?)',
+                [
+                  orderId,
+                  it.id != null ? Number(it.id) : null,
+                  it.name || '',
+                  Number(it.qty || it.quantity || 1),
+                  Number(it.price || 0),
+                  it.color || '',
+                  it.talle || '',
+                ]
               );
             }
           }
@@ -1105,7 +1122,7 @@ app.get('/api/auth/admin/session', requireProductsView, (req, res) => {
 app.get('/api/admin/products', requireProductsView, async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT p.id, p.name, p.price, p.image, p.category, p.quantity, p.supplier_id, s.name AS supplier_name 
+      SELECT p.id, p.name, p.price, p.image, p.category, p.colors, p.sizes, p.quantity, p.supplier_id, s.name AS supplier_name 
       FROM products p
       LEFT JOIN suppliers s ON p.supplier_id = s.id
       ORDER BY p.id
@@ -1121,14 +1138,19 @@ app.get('/api/admin/products', requireProductsView, async (req, res) => {
 
 // Admin: crear producto con imagen base64
 app.post('/api/admin/products', requireProductManagement, async (req, res) => {
-  const { name, price, category, imageBase64, quantity, supplier_id } = req.body || {};
-  if (!name || typeof price !== 'number' || !imageBase64 || typeof imageBase64 !== 'string') {
+  const { name, price, category, imageBase64, quantity, supplier_id, colors, sizes } = req.body || {};
+  if (!name || typeof price !== 'number') {
     return res.status(400).json({ ok: false, error: 'Datos de producto inválidos' });
   }
+  const imageValue = (typeof imageBase64 === 'string' && imageBase64.trim())
+    ? imageBase64
+    : '/img/1.webp';
+  const colorsText = colors != null ? String(colors).trim() : '';
+  const sizesText = sizes != null ? String(sizes).trim() : '';
   try {
     const result = await db.query(
-      'INSERT INTO products(name, price, image, category, quantity, supplier_id) VALUES(?, ?, ?, ?, COALESCE(?, 0), ?)',
-      [name, price, imageBase64, category || null, typeof quantity === 'number' ? quantity : 0, supplier_id || null]
+      'INSERT INTO products(name, price, image, category, colors, sizes, quantity, supplier_id) VALUES(?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?)',
+      [name, price, imageValue, category || null, colorsText, sizesText, typeof quantity === 'number' ? quantity : 0, supplier_id || null]
     );
     const id = result.insertId;
     if (!id) throw new Error('No id from DB');
@@ -1136,7 +1158,7 @@ app.post('/api/admin/products', requireProductManagement, async (req, res) => {
     return res.json({ ok: true, id });
   } catch (err) {
     const memId = (memory.products.length ? memory.products[memory.products.length - 1].id + 1 : 1000);
-    const prod = { id: memId, name, price, category: category || '', image: imageBase64, quantity: typeof quantity === 'number' ? quantity : 0, supplier_id: supplier_id || null, soldCount: 0 };
+    const prod = { id: memId, name, price, category: category || '', colors: colorsText, sizes: sizesText, image: imageValue, quantity: typeof quantity === 'number' ? quantity : 0, supplier_id: supplier_id || null, soldCount: 0 };
     memory.products.push(prod);
     safePersistState();
     return res.json({ ok: true, id: memId, stored: 'memory' });
@@ -1146,9 +1168,11 @@ app.post('/api/admin/products', requireProductManagement, async (req, res) => {
 // Admin: actualizar producto
 app.put('/api/admin/products/:id', requireProductsView, async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const { name, price, category, imageBase64, quantity, supplier_id } = req.body || {};
+  const { name, price, category, imageBase64, quantity, supplier_id, colors, sizes } = req.body || {};
   if (Number.isNaN(id)) return res.status(400).json({ ok: false, error: 'ID inválido' });
   const role = req.panelSession?.role;
+  const colorsText = colors != null ? String(colors).trim() : null;
+  const sizesText = sizes != null ? String(sizes).trim() : null;
   try {
     if (role === 'stock') {
       const result = await db.query(
@@ -1162,8 +1186,8 @@ app.put('/api/admin/products/:id', requireProductsView, async (req, res) => {
       throw new Error('No DB row updated');
     }
     const result = await db.query(
-      'UPDATE products SET name = COALESCE(?, name), price = COALESCE(?, price), image = COALESCE(?, image), category = COALESCE(?, category), quantity = COALESCE(?, quantity), supplier_id = COALESCE(?, supplier_id) WHERE id = ?',
-      [name || null, typeof price === 'number' ? price : null, imageBase64 || null, category || null, typeof quantity === 'number' ? quantity : null, supplier_id || null, id]
+      'UPDATE products SET name = COALESCE(?, name), price = COALESCE(?, price), image = COALESCE(?, image), category = COALESCE(?, category), colors = COALESCE(?, colors), sizes = COALESCE(?, sizes), quantity = COALESCE(?, quantity), supplier_id = COALESCE(?, supplier_id) WHERE id = ?',
+      [name || null, typeof price === 'number' ? price : null, imageBase64 || null, category || null, colorsText, sizesText, typeof quantity === 'number' ? quantity : null, supplier_id || null, id]
     );
     if (result.affectedRows && result.affectedRows > 0) {
       safePersistState();
@@ -1185,6 +1209,8 @@ app.put('/api/admin/products/:id', requireProductsView, async (req, res) => {
           price: typeof price === 'number' ? price : current.price,
           image: imageBase64 ?? current.image,
           category: category ?? current.category,
+          colors: colorsText ?? current.colors ?? '',
+          sizes: sizesText ?? current.sizes ?? '',
           quantity: typeof quantity === 'number' ? quantity : (current.quantity ?? 0),
           supplier_id: supplier_id ?? current.supplier_id,
         };
@@ -1206,6 +1232,330 @@ app.delete('/api/admin/products/:id', requireAdmin, async (req, res) => {
     memory.products.splice(idx, 1);
     safePersistState();
     return res.json({ ok: true, stored: 'memory' });
+  }
+});
+
+// Admin/Stock: devoluciones (registrar y listar)
+app.get('/api/admin/returns', requireInventoryAccess, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT r.id, r.product_id, p.name AS product_name, r.qty, r.reason, r.order_id,
+              r.created_by_email, r.created_by_name, r.created_at
+       FROM \`returns\` r
+       LEFT JOIN products p ON p.id = r.product_id
+       ORDER BY r.id DESC
+       LIMIT 200`
+    );
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const extra = Array.isArray(memory.returns) ? memory.returns : [];
+    const combined = [...rows, ...extra];
+    combined.sort((a, b) => {
+      const ta = new Date(a?.created_at || 0).getTime();
+      const tb = new Date(b?.created_at || 0).getTime();
+      if (tb !== ta) return tb - ta;
+      return (Number(b?.id) || 0) - (Number(a?.id) || 0);
+    });
+    res.json(combined.slice(0, 200));
+  } catch (err) {
+    res.json(Array.isArray(memory.returns) ? memory.returns : []);
+  }
+});
+
+app.post('/api/admin/returns', requireInventoryAccess, async (req, res) => {
+  const { productId, productName, qty, reason, orderId } = req.body || {};
+  const pid = productId != null && String(productId).trim() !== '' ? Number.parseInt(productId, 10) : NaN;
+  const pname = productName != null ? String(productName).trim() : '';
+  const q = Number.parseInt(qty, 10);
+  if (!pname || Number.isNaN(q) || q <= 0) {
+    return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+  }
+  const session = req.panelSession || {};
+  const reasonText = reason != null ? String(reason).trim() : null;
+  const orderIdText = orderId != null ? String(orderId).trim() : null;
+
+  try {
+    await db.query(
+      `CREATE TABLE IF NOT EXISTS \`returns\` (
+        \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        \`product_id\` INT UNSIGNED NOT NULL,
+        \`qty\` INT NOT NULL,
+        \`reason\` TEXT NULL,
+        \`order_id\` VARCHAR(50) NULL,
+        \`created_by_email\` VARCHAR(255) NULL,
+        \`created_by_name\` VARCHAR(255) NULL,
+        \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        KEY \`idx_returns_product\` (\`product_id\`),
+        KEY \`idx_returns_created_at\` (\`created_at\`),
+        CONSTRAINT \`fk_returns_product\` FOREIGN KEY (\`product_id\`) REFERENCES \`products\` (\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+    );
+
+    let resolved = null;
+    const exactRes = await db.query('SELECT id, name FROM products WHERE LOWER(name) = LOWER(?) LIMIT 1', [pname]);
+    resolved = Array.isArray(exactRes.rows) ? exactRes.rows[0] : null;
+    if (!resolved) {
+      const likeRes = await db.query(
+        'SELECT id, name FROM products WHERE LOWER(name) LIKE LOWER(?) ORDER BY LENGTH(name) ASC, id ASC LIMIT 6',
+        [`%${pname}%`]
+      );
+      const candidates = Array.isArray(likeRes.rows) ? likeRes.rows : [];
+      if (candidates.length === 1) {
+        resolved = candidates[0];
+      } else if (candidates.length > 1) {
+        return res.status(409).json({
+          ok: false,
+          error: 'Hay más de un producto que coincide con ese nombre. Especificá mejor el nombre.',
+          matches: candidates.slice(0, 5).map(row => row.name),
+        });
+      }
+    }
+    const resolvedId = resolved ? Number.parseInt(resolved.id, 10) : NaN;
+    const productRow = Number.isFinite(resolvedId) ? resolved : null;
+    if (!productRow) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
+
+    await db.query('UPDATE products SET quantity = quantity + ? WHERE id = ?', [q, resolvedId]);
+    const ins = await db.query(
+      'INSERT INTO `returns`(product_id, qty, reason, order_id, created_by_email, created_by_name) VALUES(?, ?, ?, ?, ?, ?)',
+      [resolvedId, q, reasonText || null, orderIdText || null, session.email || null, session.name || null]
+    );
+    safePersistState();
+    return res.json({ ok: true, id: ins.insertId || null });
+  } catch (err) {
+    const normalized = pname.toLowerCase();
+    let idx = memory.products.findIndex(p => String(p?.name || '').trim().toLowerCase() === normalized);
+    if (idx < 0) {
+      const candidates = memory.products
+        .filter(p => String(p?.name || '').trim().toLowerCase().includes(normalized))
+        .slice(0, 6);
+      if (candidates.length === 1) {
+        idx = memory.products.findIndex(p => Number(p?.id) === Number(candidates[0]?.id));
+      } else if (candidates.length > 1) {
+        return res.status(409).json({
+          ok: false,
+          error: 'Hay más de un producto que coincide con ese nombre. Especificá mejor el nombre.',
+          matches: candidates.slice(0, 5).map(p => p?.name || ''),
+        });
+      }
+    }
+    if (idx < 0) return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
+    const resolvedId = Number(memory.products[idx]?.id);
+
+    const currentQty = Number(memory.products[idx]?.quantity) || 0;
+    memory.products[idx].quantity = currentQty + q;
+    const item = {
+      id: Date.now(),
+      product_id: resolvedId,
+      product_name: memory.products[idx]?.name || '',
+      qty: q,
+      reason: reasonText || '',
+      order_id: orderIdText || '',
+      created_by_email: session.email || '',
+      created_by_name: session.name || '',
+      created_at: new Date().toISOString(),
+      stored: 'memory',
+    };
+    if (!Array.isArray(memory.returns)) memory.returns = [];
+    memory.returns.unshift(item);
+    safePersistState();
+    return res.json({ ok: true, id: item.id, stored: 'memory' });
+  }
+});
+
+app.get('/api/admin/order-returns', requireOrdersAccess, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT r.id, r.order_id, r.order_item_id, r.product_id, r.product_name, r.color, r.talle, r.qty, r.reason, r.status,
+              r.requested_by_email, r.requested_by_name, r.decided_by_email, r.decided_by_name, r.decided_at,
+              r.received_by_email, r.received_by_name, r.received_at, r.refunded_by_email, r.refunded_by_name, r.refunded_at,
+              r.created_at, r.updated_at,
+              o.customer_email, o.customer_name, o.customer_lastname
+       FROM order_returns r
+       LEFT JOIN orders o ON o.id = r.order_id
+       ORDER BY r.id DESC
+       LIMIT 300`
+    );
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const extra = Array.isArray(memory.orderReturns) ? memory.orderReturns : [];
+    const byId = new Map();
+    for (const item of [...rows, ...extra]) {
+      const key = String(item?.id || '');
+      if (!key) continue;
+      if (!byId.has(key)) byId.set(key, item);
+    }
+    const combined = Array.from(byId.values());
+    combined.sort((a, b) => {
+      const ta = new Date(a?.created_at || a?.createdAt || 0).getTime();
+      const tb = new Date(b?.created_at || b?.createdAt || 0).getTime();
+      if (tb !== ta) return tb - ta;
+      return (Number(b?.id) || 0) - (Number(a?.id) || 0);
+    });
+    res.json(combined.slice(0, 300));
+  } catch (err) {
+    res.json(Array.isArray(memory.orderReturns) ? memory.orderReturns : []);
+  }
+});
+
+app.post('/api/admin/order-returns', requireSalesAccess, async (req, res) => {
+  const session = req.panelSession || {};
+  const orderId = Number.parseInt(req.body?.orderId, 10);
+  const orderItemId = Number.parseInt(req.body?.orderItemId, 10);
+  const qty = Number.parseInt(req.body?.qty, 10);
+  const reasonText = req.body?.reason != null ? String(req.body.reason).trim() : null;
+  if (Number.isNaN(orderId) || Number.isNaN(orderItemId) || Number.isNaN(qty) || qty <= 0) {
+    return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+  }
+
+  try {
+    const itemRes = await db.query(
+      'SELECT id, order_id, product_id, name, qty, color, talle FROM order_items WHERE id = ? LIMIT 1',
+      [orderItemId]
+    );
+    const item = Array.isArray(itemRes.rows) ? itemRes.rows[0] : null;
+    if (!item || Number(item.order_id) !== orderId) {
+      return res.status(404).json({ ok: false, error: 'Item de pedido no encontrado' });
+    }
+    const maxQty = Number(item.qty) || 0;
+    if (qty > maxQty) {
+      return res.status(400).json({ ok: false, error: `La cantidad máxima para devolver es ${maxQty}` });
+    }
+
+    const ins = await db.query(
+      'INSERT INTO order_returns(order_id, order_item_id, product_id, product_name, color, talle, qty, reason, status, requested_by_email, requested_by_name) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        orderId,
+        orderItemId,
+        item.product_id || null,
+        item.name || '',
+        item.color || '',
+        item.talle || '',
+        qty,
+        reasonText || null,
+        'solicitada',
+        session.email || null,
+        session.name || null,
+      ]
+    );
+    safePersistState();
+    return res.json({ ok: true, id: ins.insertId || null });
+  } catch (err) {
+    const order = Array.isArray(memory.orders) ? memory.orders.find(o => Number(o?.id) === orderId) : null;
+    const items = Array.isArray(order?.items) ? order.items : [];
+    const item = items.find(it => Number(it?.id) === orderItemId) || null;
+    if (!order || !item) return res.status(404).json({ ok: false, error: 'Item de pedido no encontrado' });
+    const maxQty = Number(item.qty ?? item.quantity ?? 0) || 0;
+    if (qty > maxQty) {
+      return res.status(400).json({ ok: false, error: `La cantidad máxima para devolver es ${maxQty}` });
+    }
+    const nextId = (() => {
+      const current = Array.isArray(memory.orderReturns) ? memory.orderReturns : [];
+      const max = current.reduce((acc, r) => Math.max(acc, Number(r?.id) || 0), 0);
+      return Math.max(1000000, max + 1);
+    })();
+    const rec = {
+      id: nextId,
+      order_id: orderId,
+      order_item_id: orderItemId,
+      product_id: item.product_id || item.id || null,
+      product_name: item.name || '',
+      color: item.color || '',
+      talle: item.talle || '',
+      qty,
+      reason: reasonText || '',
+      status: 'solicitada',
+      requested_by_email: session.email || '',
+      requested_by_name: session.name || '',
+      created_at: new Date().toISOString(),
+      stored: 'memory',
+    };
+    if (!Array.isArray(memory.orderReturns)) memory.orderReturns = [];
+    memory.orderReturns.unshift(rec);
+    safePersistState();
+    res.json({ ok: true, id: rec.id, stored: 'memory' });
+  }
+});
+
+app.put('/api/admin/order-returns/:id/status', requireOrdersAccess, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const status = String(req.body?.status || '').trim().toLowerCase();
+  if (Number.isNaN(id) || !status) return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+  const allowed = new Set(['solicitada', 'aprobada', 'rechazada', 'recibida', 'reembolsada']);
+  if (!allowed.has(status)) return res.status(400).json({ ok: false, error: 'Estado inválido' });
+
+  const session = req.panelSession || {};
+  const role = normalizePanelRole(session.role);
+  const canTransition = (from, to) => {
+    if (role === 'admin') return true;
+    if (role === 'vendedor') {
+      if (from === 'solicitada' && (to === 'aprobada' || to === 'rechazada')) return true;
+      if (from === 'recibida' && to === 'reembolsada') return true;
+      return false;
+    }
+    if (role === 'stock') {
+      return from === 'aprobada' && to === 'recibida';
+    }
+    return false;
+  };
+
+  try {
+    const currentRes = await db.query('SELECT id, status, product_id, qty FROM order_returns WHERE id = ? LIMIT 1', [id]);
+    const current = Array.isArray(currentRes.rows) ? currentRes.rows[0] : null;
+    if (!current) return res.status(404).json({ ok: false, error: 'Devolución no encontrada' });
+    const from = String(current.status || '').toLowerCase();
+    if (!canTransition(from, status)) return res.status(403).json({ ok: false, error: 'No tenés permisos para este cambio de estado' });
+
+    const sets = ['status = ?'];
+    const params = [status];
+    if (status === 'aprobada' || status === 'rechazada') {
+      sets.push('decided_by_email = ?', 'decided_by_name = ?', 'decided_at = NOW()');
+      params.push(session.email || null, session.name || null);
+    }
+    if (status === 'recibida') {
+      sets.push('received_by_email = ?', 'received_by_name = ?', 'received_at = NOW()');
+      params.push(session.email || null, session.name || null);
+    }
+    if (status === 'reembolsada') {
+      sets.push('refunded_by_email = ?', 'refunded_by_name = ?', 'refunded_at = NOW()');
+      params.push(session.email || null, session.name || null);
+    }
+    params.push(id);
+    await db.query(`UPDATE order_returns SET ${sets.join(', ')} WHERE id = ?`, params);
+    if (status === 'recibida' && current.product_id) {
+      await db.query('UPDATE products SET quantity = quantity + ? WHERE id = ?', [Number(current.qty) || 0, Number(current.product_id)]);
+    }
+    safePersistState();
+    return res.json({ ok: true, id, status });
+  } catch (err) {
+    const list = Array.isArray(memory.orderReturns) ? memory.orderReturns : [];
+    const idx = list.findIndex(r => Number(r?.id) === id);
+    if (idx < 0) return res.status(404).json({ ok: false, error: 'Devolución no encontrada' });
+    const current = list[idx];
+    const from = String(current?.status || '').toLowerCase();
+    if (!canTransition(from, status)) return res.status(403).json({ ok: false, error: 'No tenés permisos para este cambio de estado' });
+    list[idx] = {
+      ...current,
+      status,
+      updated_at: new Date().toISOString(),
+      ...(status === 'aprobada' || status === 'rechazada'
+        ? { decided_by_email: session.email || '', decided_by_name: session.name || '', decided_at: new Date().toISOString() }
+        : {}),
+      ...(status === 'recibida'
+        ? { received_by_email: session.email || '', received_by_name: session.name || '', received_at: new Date().toISOString() }
+        : {}),
+      ...(status === 'reembolsada'
+        ? { refunded_by_email: session.email || '', refunded_by_name: session.name || '', refunded_at: new Date().toISOString() }
+        : {}),
+    };
+    if (status === 'recibida' && current.product_id) {
+      const pIdx = Array.isArray(memory.products) ? memory.products.findIndex(p => Number(p?.id) === Number(current.product_id)) : -1;
+      if (pIdx >= 0) {
+        const currentQty = Number(memory.products[pIdx]?.quantity) || 0;
+        memory.products[pIdx].quantity = currentQty + (Number(current.qty) || 0);
+      }
+    }
+    memory.orderReturns = list;
+    safePersistState();
+    res.json({ ok: true, id, status, stored: 'memory' });
   }
 });
 
@@ -1739,7 +2089,7 @@ app.post('/api/orders/confirm', async (req, res) => {
     customerEmail: isEmail(customerEmail) ? customerEmail : (isEmail(userId) ? userId : ''),
     customerName,
     customerLastName,
-    items: items.map(it => ({ id: it.id, name: it.name, qty: it.quantity || 1, price: it.price || 0 })),
+    items: items.map(it => ({ id: it.id, name: it.name, color: it.color || '', talle: it.talle || '', qty: it.quantity || 1, price: it.price || 0 })),
     status: 'pendiente',
     ts: new Date().toISOString(),
     shipping: {
@@ -1778,7 +2128,10 @@ app.post('/api/orders/confirm', async (req, res) => {
     const dbOrderId = r.insertId;
     if (dbOrderId) {
       for (const it of items) {
-        await db.query('INSERT INTO order_items (order_id, product_id, name, qty, price) VALUES (?, ?, ?, ?, ?)', [dbOrderId, it.id || null, it.name, it.quantity || 1, it.price]);
+        await db.query(
+          'INSERT INTO order_items (order_id, product_id, name, qty, price, color, talle) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [dbOrderId, it.id || null, it.name, it.quantity || 1, it.price, it.color || '', it.talle || '']
+        );
       }
       console.log(`[DB] Pedido #${dbOrderId} guardado con éxito`);
     }
@@ -1828,7 +2181,7 @@ app.post('/api/shipping/correo-argentino/create-shipment', async (req, res) => {
   const o = memory.orders.find(oo => oo.id === Number(orderId));
   if (o) {
     o.shipping = { ...(o.shipping || {}), address, postalCode, province, recipient, carrier: 'Correo Argentino', tracking };
-    o.status = (o.status === 'preparando') ? 'enviado' : o.status;
+    o.status = (o.status === 'preparando' || o.status === 'listo') ? 'enviado' : o.status;
     updated = true;
   }
   if (!updated) return res.status(404).json({ ok: false, error: 'Pedido no encontrado' });
@@ -1836,7 +2189,7 @@ app.post('/api/shipping/correo-argentino/create-shipment', async (req, res) => {
 });
 
 // --- Admin: Pedidos ---
-app.get('/api/admin/orders', requireSalesAccess, async (req, res) => {
+app.get('/api/admin/orders', requireOrdersAccess, async (req, res) => {
   try {
     const ordersRes = await db.query(
       'SELECT id, customer, customer_email, customer_name, customer_lastname, status, total, payment_method, shipping_recipient, shipping_address, shipping_province, shipping_postal_code, shipping_phone, shipping_carrier, shipping_tracking, created_at, updated_at FROM orders ORDER BY id DESC'
@@ -1845,7 +2198,7 @@ app.get('/api/admin/orders', requireSalesAccess, async (req, res) => {
     if (ordersRows.length) {
       const ids = ordersRows.map(o => o.id);
       const placeholders = ids.map(() => '?').join(',');
-      const itemsRes = await db.query(`SELECT id, order_id, product_id, name, qty, price FROM order_items WHERE order_id IN (${placeholders})`, ids);
+      const itemsRes = await db.query(`SELECT id, order_id, product_id, name, qty, price, color, talle FROM order_items WHERE order_id IN (${placeholders})`, ids);
       const items = Array.isArray(itemsRes.rows) ? itemsRes.rows : [];
       const grouped = ordersRows.map(o => ({
         id: o.id,
@@ -1886,7 +2239,10 @@ app.post('/api/admin/orders', requireSalesAccess, async (req, res) => {
     const r = await db.query('INSERT INTO orders (customer, status) VALUES (?, ?)', [customer, 'pendiente']);
     const orderId = r.insertId;
     for (const it of items) {
-      await db.query('INSERT INTO order_items (order_id, product_id, name, qty, price) VALUES (?, ?, ?, ?, ?)', [orderId, it.id || null, it.name || '', Number(it.qty) || 0, Number(it.price) || 0]);
+      await db.query(
+        'INSERT INTO order_items (order_id, product_id, name, qty, price, color, talle) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [orderId, it.id || null, it.name || '', Number(it.qty) || 0, Number(it.price) || 0, it.color || '', it.talle || '']
+      );
     }
     // Crédito de ruleta por compra (memoria)
     const uid = (customer || 'guest').toLowerCase();
@@ -1904,10 +2260,10 @@ app.post('/api/admin/orders', requireSalesAccess, async (req, res) => {
   }
 });
 
-app.put('/api/admin/orders/:id/status', requireSalesAccess, async (req, res) => {
+app.put('/api/admin/orders/:id/status', requireOrdersAccess, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { status } = req.body || {};
-  const allowed = new Set(['pendiente','preparando','enviado','entregado','cancelado']);
+  const allowed = new Set(['pendiente','preparando','listo','enviado','entregado','cancelado']);
   if (Number.isNaN(id) || !allowed.has(status)) {
     return res.status(400).json({ ok: false, error: 'Datos inválidos' });
   }
@@ -1961,7 +2317,7 @@ app.put('/api/admin/orders/:id/status', requireSalesAccess, async (req, res) => 
 });
 
 // --- Admin: Proveedores ---
-app.get('/api/admin/suppliers', requireAdmin, async (req, res) => {
+app.get('/api/admin/suppliers', requireSuppliersAccess, async (req, res) => {
   try {
     const result = await db.query('SELECT id, name, contact, email, phone, notes, created_at, updated_at FROM suppliers ORDER BY id DESC');
     const rows = Array.isArray(result.rows) ? result.rows : [];
@@ -1972,7 +2328,7 @@ app.get('/api/admin/suppliers', requireAdmin, async (req, res) => {
   res.json(memory.suppliers);
 });
 
-app.post('/api/admin/suppliers', requireAdmin, async (req, res) => {
+app.post('/api/admin/suppliers', requireSuppliersAccess, async (req, res) => {
   const { name, contact, email, phone, notes } = req.body || {};
   if (!name) return res.status(400).json({ ok: false, error: 'Nombre requerido' });
   try {
@@ -2764,14 +3120,75 @@ app.put('/api/admin/site/home', requireAdmin, async (req, res) => {
 });
 
 // --- Admin: Mensajes de contacto ---
-app.get('/api/admin/contact-messages', requireAdmin, async (req, res) => {
+app.get('/api/admin/contact-messages', requireSalesAccess, async (req, res) => {
   try {
-    const result = await db.query('SELECT id, name, email, message FROM contact_messages ORDER BY id DESC LIMIT 200');
+    const result = await db.query(
+      'SELECT id, name, email, message, status, reply, replied_by_email, replied_by_name, replied_at, created_at FROM contact_messages ORDER BY id DESC LIMIT 200'
+    );
     const rows = Array.isArray(result.rows) ? result.rows : [];
-    res.json(rows);
+    return res.json(rows);
   } catch (err) {
-    // Si no hay DB o falla la consulta, devolver lista vacía
-    res.json([]);
+    try {
+      const legacy = await db.query('SELECT id, name, email, message FROM contact_messages ORDER BY id DESC LIMIT 200');
+      const rows = Array.isArray(legacy.rows) ? legacy.rows : [];
+      return res.json(rows.map(row => ({ ...row, status: 'pendiente', reply: null, replied_at: null })));
+    } catch {
+      return res.json([]);
+    }
+  }
+});
+
+app.put('/api/admin/contact-messages/:id/reply', requireSalesAccess, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'ID inválido' });
+
+  const reply = String(req.body?.reply || '').trim();
+  if (!reply) return res.status(400).json({ ok: false, error: 'La respuesta no puede estar vacía' });
+
+  const panel = req.panelSession || {};
+  const repliedByEmail = String(panel.email || '').trim().toLowerCase() || null;
+  const repliedByName = String(panel.name || '').trim() || null;
+  const escHtml = (value) => String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  try {
+    const msgResult = await db.query('SELECT id, name, email, message FROM contact_messages WHERE id = ? LIMIT 1', [id]);
+    const msg = Array.isArray(msgResult.rows) ? msgResult.rows[0] : null;
+    if (!msg) return res.status(404).json({ ok: false, error: 'Mensaje no encontrado' });
+
+    await db.query(
+      "UPDATE contact_messages SET reply = ?, status = 'respondida', replied_by_email = ?, replied_by_name = ?, replied_at = NOW() WHERE id = ?",
+      [reply, repliedByEmail, repliedByName, id]
+    );
+
+    const mailOk = await sendEmail({
+      to: msg.email,
+      subject: 'Respuesta a tu consulta',
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.4;">
+          <p>Hola ${String(msg.name || '').trim() || 'cliente'},</p>
+          <p>Respondimos tu consulta:</p>
+          <div style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; white-space: pre-wrap;">${escHtml(reply)}</div>
+          <p style="margin-top: 16px;">Gracias por comunicarte con nosotros.</p>
+        </div>
+      `,
+    });
+
+    return res.json({
+      ok: true,
+      mailed: !!mailOk,
+      message: {
+        id,
+        reply,
+        status: 'respondida',
+        replied_by_email: repliedByEmail,
+        replied_by_name: repliedByName,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'No se pudo guardar la respuesta' });
   }
 });
 

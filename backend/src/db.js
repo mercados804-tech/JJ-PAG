@@ -101,17 +101,18 @@ async function ensureSchema() {
 
     // Asegurar columnas faltantes en tablas existentes (migraciones manuales rápidas)
     if (pool) {
-      try {
-        await pool.query('ALTER TABLE products ADD COLUMN sold_count INT NOT NULL DEFAULT 0 AFTER quantity');
-      } catch (err) {
-        // Ignorar si la columna ya existe
-      }
-      try {
-        await pool.query('ALTER TABLE promotions ADD COLUMN product_id INT UNSIGNED NULL AFTER id');
-        await pool.query('ALTER TABLE promotions ADD CONSTRAINT fk_promotions_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL');
-      } catch (err) {
-        // Ignorar si la columna ya existe
-      }
+      try { await pool.query('ALTER TABLE products ADD COLUMN sold_count INT NOT NULL DEFAULT 0 AFTER quantity'); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE products ADD COLUMN colors VARCHAR(255) NOT NULL DEFAULT ''"); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE products ADD COLUMN sizes VARCHAR(255) NOT NULL DEFAULT ''"); } catch (_) { void 0; }
+
+      try { await pool.query("ALTER TABLE contact_messages ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pendiente'"); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE contact_messages ADD COLUMN reply TEXT NULL"); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE contact_messages ADD COLUMN replied_by_email VARCHAR(255) NULL"); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE contact_messages ADD COLUMN replied_by_name VARCHAR(255) NULL"); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE contact_messages ADD COLUMN replied_at TIMESTAMP NULL DEFAULT NULL"); } catch (_) { void 0; }
+
+      try { await pool.query('ALTER TABLE promotions ADD COLUMN product_id INT UNSIGNED NULL AFTER id'); } catch (_) { void 0; }
+      try { await pool.query('ALTER TABLE promotions ADD CONSTRAINT fk_promotions_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL'); } catch (_) { void 0; }
       try { await pool.query('ALTER TABLE promotions ADD COLUMN promo_price INT NULL'); } catch (_) { void 0; }
       try { await pool.query('ALTER TABLE promotions ADD COLUMN promo_stock INT NOT NULL DEFAULT 0'); } catch (_) { void 0; }
       try { await pool.query('ALTER TABLE promotions ADD COLUMN promo_stock_remaining INT NOT NULL DEFAULT 0'); } catch (_) { void 0; }
@@ -125,6 +126,9 @@ async function ensureSchema() {
       try { await pool.query('UPDATE promotions SET promo_price = COALESCE(promo_price, price) WHERE promo_price IS NULL'); } catch (_) { void 0; }
       try { await pool.query('UPDATE promotions SET promo_stock_remaining = COALESCE(promo_stock_remaining, promo_stock, 0)'); } catch (_) { void 0; }
       try { await pool.query("UPDATE promotions SET state = COALESCE(state, 'activa')"); } catch (_) { void 0; }
+
+      try { await pool.query("ALTER TABLE order_items ADD COLUMN color VARCHAR(50) NOT NULL DEFAULT ''"); } catch (_) { void 0; }
+      try { await pool.query("ALTER TABLE order_items ADD COLUMN talle VARCHAR(20) NOT NULL DEFAULT ''"); } catch (_) { void 0; }
     }
 
     // Ejecutar seed.sql (si existe)
