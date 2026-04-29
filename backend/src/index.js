@@ -27,11 +27,23 @@ const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
   secure: SMTP_SECURE,
+  connectionTimeout: parseInt(String(process.env.SMTP_CONNECTION_TIMEOUT || '5000'), 10),
+  greetingTimeout: parseInt(String(process.env.SMTP_GREETING_TIMEOUT || '5000'), 10),
+  socketTimeout: parseInt(String(process.env.SMTP_SOCKET_TIMEOUT || '7000'), 10),
   auth: {
     user: SMTP_USER,
     pass: SMTP_PASS,
   },
 });
+
+function withTimeout(promise, ms) {
+  const t = Number(ms) || 0;
+  if (!t) return promise;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve({ __timeout: true }), t)),
+  ]);
+}
 
 async function sendEmail({ to, subject, html }) {
   try {
@@ -52,6 +64,12 @@ async function sendEmail({ to, subject, html }) {
     console.error('❌ Error enviando email:', err.message);
     return false;
   }
+}
+
+async function sendEmailFast(payload) {
+  const r = await withTimeout(sendEmail(payload), parseInt(String(process.env.SMTP_SEND_TIMEOUT || '2500'), 10));
+  if (r && r.__timeout) return false;
+  return Boolean(r);
 }
 
 function getOrderStatusLabel(status) {
@@ -1095,7 +1113,7 @@ app.post('/api/auth/register', async (req, res) => {
       void 0;
     }
   }
-  const mailOk = await sendEmail({
+  const mailOk = await sendEmailFast({
     to: userId,
     subject: 'Verifica tu cuenta - JJ Indumentaria',
     html: `
@@ -3482,7 +3500,7 @@ app.post('/api/auth/send-verification', async (req, res) => {
   if (!memory.auth.verificationCodes) memory.auth.verificationCodes = {};
   memory.auth.verificationCodes[emailNorm] = { code, exp: Date.now() + 30 * 60 * 1000 };
   
-  const mailOk = await sendEmail({
+  const mailOk = await sendEmailFast({
     to: emailNorm,
     subject: 'Código de verificación - JJ Indumentaria',
     html: `
