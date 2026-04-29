@@ -3733,14 +3733,12 @@ export default function AdminPanel() {
               const cats = Array.from(new Set(products.map(p => String(p.category || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b))
               const list = products
                 .filter(p => {
-                  const productImage = getPublicProductImage(p)
-                  const hasImage = Boolean(productImage)
                   const matches = !term || (p.name || '').toLowerCase().includes(term) || (p.category || '').toLowerCase().includes(term)
                   const passCat = inventoryCategory === 'todas' || String(p.category || '').trim() === inventoryCategory
                   const st = statusInfo(p.quantity).label
                   const f = statusFilter
                   const passStatus = f === 'todos' || (f === 'ok' && st === 'OK') || (f === 'bajo' && st === 'Bajo') || (f === 'critico' && st === 'Crítico')
-                  return hasImage && matches && passCat && passStatus
+                  return matches && passCat && passStatus
                 })
                 .slice(0, 20)
               return (
@@ -3784,7 +3782,6 @@ export default function AdminPanel() {
                       <tbody>
                         {list.map(p => {
                           const s = statusInfo(p.quantity)
-                          const productImage = getPublicProductImage(p)
                           const bySize = (inventoryStockBySize && typeof inventoryStockBySize === 'object')
                             ? (inventoryStockBySize[String(p.id)] || {})
                             : {}
@@ -3793,7 +3790,6 @@ export default function AdminPanel() {
                             <tr key={p.id} className="border-b align-top">
                               <td className="py-3 px-2">
                                 <div className="flex items-center gap-3">
-                                  {productImage && <img src={productImage} alt={p.name} className="w-12 h-12 object-cover rounded-lg" />}
                                   <div className="font-bold">{p.name}</div>
                                 </div>
                               </td>
