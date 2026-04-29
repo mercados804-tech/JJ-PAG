@@ -52,6 +52,8 @@ async function sendEmail({ to, subject, html }) {
       console.log(`SIMULACIÓN DE ENVÍO A ${to}: [${subject}]`);
       return false;
     }
+    memory.smtp = memory.smtp || {};
+    memory.smtp.lastAttemptAt = new Date().toISOString();
     const info = await transporter.sendMail({
       from: `"${process.env.ADMIN_NAME || 'JJ Indumentaria'}" <${SMTP_FROM}>`,
       to,
@@ -59,9 +61,14 @@ async function sendEmail({ to, subject, html }) {
       html,
     });
     console.log('Email sent:', info.messageId);
+    memory.smtp.lastOkAt = new Date().toISOString();
+    memory.smtp.lastError = null;
     return true;
   } catch (err) {
     console.error('❌ Error enviando email:', err.message);
+    memory.smtp = memory.smtp || {};
+    memory.smtp.lastError = String(err?.message || err);
+    memory.smtp.lastErrorAt = new Date().toISOString();
     return false;
   }
 }
@@ -227,6 +234,15 @@ app.get('/api/health', async (req, res) => {
     dbEnabled: DB_ENABLED,
     dbOk,
     dbError,
+    smtpConfigured: !SMTP_PLACEHOLDER,
+    smtpHost: SMTP_HOST,
+    smtpPort: SMTP_PORT,
+    smtpUser: SMTP_USER ? `${SMTP_USER.slice(0, 3)}***${SMTP_USER.includes('@') ? '@' + SMTP_USER.split('@')[1] : ''}` : null,
+    smtpFrom: SMTP_FROM || null,
+    smtpLastAttemptAt: memory.smtp?.lastAttemptAt || null,
+    smtpLastOkAt: memory.smtp?.lastOkAt || null,
+    smtpLastErrorAt: memory.smtp?.lastErrorAt || null,
+    smtpLastError: memory.smtp?.lastError || null,
     persistPath: PERSIST_PATH,
   });
 });
