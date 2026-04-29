@@ -6,11 +6,11 @@ const API_BASE = String(import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
 const apiUrl = (url) => (API_BASE ? `${API_BASE}${url}` : url)
 
 function Section({ title, children, theme }) {
-  const baseCls = theme === 'dark' ? 'bg-blue-900 border-blue-800' : 'bg-white border-gray-100'
-  const titleCls = theme === 'dark' ? 'text-blue-200' : 'text-gray-900'
+  const baseCls = theme === 'dark' ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-gray-100 text-gray-900'
+  const titleCls = theme === 'dark' ? 'text-slate-200' : 'text-gray-900'
   return (
-    <section className={`${baseCls} rounded-[2.5rem] shadow-sm p-8 mb-8 border`}>
-      <h2 className={`${titleCls} text-2xl font-black mb-6 uppercase tracking-tight`}>{title}</h2>
+    <section className={`${baseCls} rounded-[2rem] shadow-sm p-8 mb-8 border`}>
+      <h2 className={`${titleCls} text-lg font-black mb-6 uppercase tracking-widest`}>{title}</h2>
       {children}
     </section>
   )
@@ -97,18 +97,28 @@ function Sidebar({ tab, setTab, theme }) {
     ['notificaciones','Notificaciones'],
     ['config','Configuraciones'],
   ]
-  const base = theme === 'dark' ? 'bg-blue-900 text-blue-50 border-blue-800' : 'bg-white text-blue-800 border-blue-100'
-  const active = theme === 'dark' ? 'bg-blue-700 text-white' : 'bg-blue-100 text-blue-900'
-  const hover = theme === 'dark' ? 'hover:bg-blue-800' : 'hover:bg-blue-50'
+  const base = theme === 'dark' ? 'bg-slate-900 text-slate-50 border-slate-800' : 'bg-white text-gray-700 border-gray-100'
+  const active = theme === 'dark' ? 'bg-slate-800 text-white' : 'bg-blue-50 text-[#1E3A8A]'
+  const hover = theme === 'dark' ? 'hover:bg-slate-800' : 'hover:bg-gray-50'
   return (
-    <aside className={`w-56 shrink-0 rounded-xl border ${base} p-3`}> 
+    <aside className={`w-64 shrink-0 border-r border-gray-100 ${base} p-6 flex flex-col`}> 
+      <div className="flex items-center gap-3 mb-8">
+        <div className={`w-10 h-10 rounded-xl overflow-hidden border border-gray-100 shadow-sm flex items-center justify-center ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'}`}>
+          {theme === 'dark' ? (
+            <span className="text-slate-100 font-black">JJ</span>
+          ) : (
+            <span className="text-[#1E3A8A] font-black">JJ</span>
+          )}
+        </div>
+        <p className={`text-xs font-black uppercase tracking-[0.3em] ${theme === 'dark' ? 'text-slate-200' : 'text-blue-600'}`}>Usuario</p>
+      </div>
       <nav className="flex flex-col gap-1">
         {items.map(([key,label]) => (
           <button key={key} type="button" onClick={() => setTab(key)}
-            className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${tab===key ? active : ''} ${hover}`}
+            className={`w-full text-left px-4 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center gap-3 ${tab===key ? active : (theme === 'dark' ? 'text-slate-300' : 'text-gray-500')} ${hover}`}
           >
-            <span className="text-blue-700"><NavIcon name={key} /></span>
-            <span>{label}</span>
+            <span className={theme === 'dark' ? 'text-slate-200' : 'text-blue-700'}><NavIcon name={key} /></span>
+            <span className="truncate">{label}</span>
           </button>
         ))}
       </nav>
@@ -134,6 +144,8 @@ export default function UserPanel() {
   const [theme, setTheme] = useState('light')
   const [orderQuery, setOrderQuery] = useState('')
   const [isSpinning, setIsSpinning] = useState(false)
+  const [showReferral, setShowReferral] = useState(false)
+  const [referralLink, setReferralLink] = useState('')
   // Nuevas experiencias interactivas
   const [closet, setCloset] = useState(() => {
     try { return JSON.parse(localStorage.getItem('closet') || '[]') } catch { return [] }
@@ -255,41 +267,60 @@ export default function UserPanel() {
   }
 
   async function spinWheel() {
+    if (isSpinning) return
+    setIsSpinning(true)
     try {
-      if (isSpinning) return
-      if (loyalty?.flags && loyalty.flags.canSpin === false) {
-        // Aún así pedir al backend para obtener el mensaje de bloqueo y refrescar estado
-        await earnPoints('spin')
+      const res = await fetch(apiUrl(`/api/user/loyalty/earn${qUser}`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'spin' })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data?.ok) {
+        notify(data?.error || 'No se pudo girar la ruleta', 'error')
         return
       }
-      setIsSpinning(true)
-      // 1) Solicitar resultado al backend
-      const res = await fetch(apiUrl(`/api/user/loyalty/earn${qUser}`), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'spin' })
-      })
-      const data = await res.json()
-      // 2) Calcular ángulo objetivo según puntos obtenidos
-      const options = [0, 5, 10, 15, 20]
-      const idx = Math.max(0, options.indexOf(Number(data?.earned ?? 0)))
-      const segments = options.length
-      const base = 360 * 4 // giros completos para animar
-      const segmentSize = 360 / segments
-      // Pequeño offset aleatorio dentro del segmento para naturalidad
-      const jitter = (Math.random() * 0.6 - 0.3) * segmentSize
-      const targetCenter = (idx + 0.5) * segmentSize + jitter
-      void (base + targetCenter)
-      // 3) Finalizar animación y refrescar estado
-      setTimeout(async () => {
-        setIsSpinning(false)
-        if (data?.ok && data.loyalty) {
-          setLoyalty(data.loyalty)
-          const nRes = await fetch(apiUrl(`/api/user/notifications${qUser}`))
-          const n = await nRes.json()
-          setNotifications(Array.isArray(n) ? n : [])
-        }
-      }, 1800)
-    } catch {
+      const earned = Number(data.earned) || 0
+      if (earned > 0) notify(`🎉 Ganaste ${earned} puntos JJ`, 'success')
+      else notify('Ruleta: esta vez no sumó puntos', 'info')
+      if (data?.loyalty) setLoyalty(data.loyalty)
+      const nRes = await fetch(apiUrl(`/api/user/notifications${qUser}`))
+      const n = await nRes.json().catch(() => [])
+      setNotifications(Array.isArray(n) ? n : [])
+    } catch (err) {
+      console.error(err)
+      notify('Error de red al girar la ruleta', 'error')
+    } finally {
       setIsSpinning(false)
+    }
+  }
+
+  function openReferral() {
+    const email = String(profile?.email || userId || '').trim().toLowerCase()
+    if (!email || email === 'guest') {
+      notify('Iniciá sesión para obtener tu link de referido', 'warning')
+      return
+    }
+    const origin = window?.location?.origin || ''
+    const link = `${origin}/usuarios?ref=${encodeURIComponent(email)}`
+    setReferralLink(link)
+    setShowReferral(true)
+  }
+
+  async function copyReferralLink() {
+    if (!referralLink) return
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(referralLink)
+        notify('Link copiado', 'success')
+        return
+      }
+    } catch {
+      void 0
+    }
+    try {
+      window.prompt('Copiá este link:', referralLink)
+    } catch {
       void 0
     }
   }
@@ -376,12 +407,11 @@ export default function UserPanel() {
   })
 
   return (
-    <div className={theme === 'dark' ? 'bg-blue-950 min-h-screen text-blue-50' : 'bg-blue-50 min-h-screen text-blue-900'}>
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="flex gap-6">
-          <Sidebar tab={tab} setTab={setTabAndSync} theme={theme} />
-          <div className="flex-1">
-            <header className="flex flex-col md:flex-row items-center justify-between mb-10 gap-6">
+    <div className={theme === 'dark' ? 'min-h-screen flex bg-slate-950 text-slate-50' : 'min-h-screen flex bg-gray-50 text-gray-900'}>
+      <Sidebar tab={tab} setTab={setTabAndSync} theme={theme} />
+      <div className="flex-1 p-6">
+        <div className="max-w-6xl mx-auto">
+          <header className="flex flex-col md:flex-row items-center justify-between mb-10 gap-6">
               <div className="space-y-1 text-center md:text-left">
                 <p className="text-blue-600 font-black uppercase tracking-widest text-xs">Panel de Usuario</p>
                 <p className={`text-xs font-bold uppercase tracking-widest ${theme === 'dark' ? 'text-blue-200' : 'text-gray-500'}`}>
@@ -421,7 +451,7 @@ export default function UserPanel() {
                   )}
                 </div>
               </div>
-            </header>
+          </header>
 
 
         {tab === 'inicio' && (
@@ -762,10 +792,10 @@ export default function UserPanel() {
               <div className={`${theme === 'dark' ? 'bg-blue-800/50' : 'bg-blue-50'} p-6 rounded-2xl border border-blue-200/20`}>
                 <p className="font-bold text-xs uppercase opacity-60 mb-4">¿Cómo sumar más?</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <button className="text-[10px] font-bold uppercase p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" onClick={spinWheel} disabled={isSpinning || (Number(loyalty?.flags?.spinCredits||0) <= 0)}>
+                  <button className="text-[10px] font-bold uppercase p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60" onClick={spinWheel} disabled={isSpinning}>
                     Ruleta ({loyalty?.flags?.spinCredits || 0})
                   </button>
-                  <button className="text-[10px] font-bold uppercase p-2 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200" onClick={()=>earnPoints('referral')}>Referir</button>
+                  <button className="text-[10px] font-bold uppercase p-2 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200" onClick={openReferral}>Referir</button>
                 </div>
               </div>
             </div>
@@ -819,7 +849,35 @@ export default function UserPanel() {
           </Section>
         )}
 
+        {showReferral && (
+          <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4" onClick={() => setShowReferral(false)}>
+            <div className={`w-full max-w-lg rounded-3xl border shadow-2xl p-6 ${theme === 'dark' ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-gray-100 text-gray-900'}`} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-blue-600">Referidos</p>
+                  <p className="text-lg font-black mt-1">Compartí tu link</p>
+                  <p className={`text-sm mt-2 ${theme === 'dark' ? 'text-slate-300' : 'text-gray-600'}`}>
+                    Cuando tu amigo se registre y verifique su cuenta, ganás puntos JJ.
+                  </p>
+                </div>
+                <button type="button" className={`w-10 h-10 rounded-2xl border flex items-center justify-center ${theme === 'dark' ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-100 hover:bg-gray-50'}`} onClick={() => setShowReferral(false)}>
+                  <span className="text-xl leading-none">×</span>
+                </button>
+              </div>
+
+              <div className="mt-6">
+                <p className={`text-[10px] font-black uppercase tracking-widest ${theme === 'dark' ? 'text-slate-300' : 'text-gray-500'}`}>Tu link</p>
+                <div className={`mt-2 flex items-center gap-2 rounded-2xl border p-3 ${theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-gray-100 bg-gray-50'}`}>
+                  <input value={referralLink} readOnly className={`w-full bg-transparent outline-none text-sm ${theme === 'dark' ? 'text-slate-100' : 'text-gray-900'}`} />
+                  <button type="button" className="px-4 py-2 rounded-2xl bg-[#1E3A8A] text-white font-black uppercase tracking-widest text-[10px] hover:bg-blue-800" onClick={copyReferralLink}>
+                    Copiar
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
+        )}
+
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Formik, Form, Field, ErrorMessage } from 'formik'
 import * as Yup from 'yup'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { notify } from '../components/notify'
 
 const API_BASE = String(import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
@@ -9,6 +9,7 @@ const apiUrl = (url) => (API_BASE ? `${API_BASE}${url}` : url)
 
 export default function Usuarios() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [showLoginPassword, setShowLoginPassword] = useState(false)
   const [showRegisterPassword, setShowRegisterPassword] = useState(false)
   
@@ -18,6 +19,15 @@ export default function Usuarios() {
   const [verificationCode, setVerificationCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [lastPassword, setLastPassword] = useState('') // Guardar contraseña temporalmente para auto-login
+
+  const referrerFromUrl = useMemo(() => {
+    try {
+      const params = new URLSearchParams(location.search || '')
+      return String(params.get('ref') || '').trim().toLowerCase()
+    } catch {
+      return ''
+    }
+  }, [location.search])
 
   const LoginSchema = Yup.object({
     email: Yup.string()
@@ -172,7 +182,7 @@ export default function Usuarios() {
     try {
       const emailNormalized = (values.email || '').trim().toLowerCase()
       const { confirmEmail: _confirmEmail, ...rest } = values
-      const payload = { ...rest, email: emailNormalized }
+      const payload = { ...rest, email: emailNormalized, ...(referrerFromUrl ? { referrer: referrerFromUrl } : {}) }
       const postJson = async (url, body) => {
         const r = await fetch(apiUrl(url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         const d = await r.json().catch(() => ({}))

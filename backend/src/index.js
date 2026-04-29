@@ -1033,6 +1033,8 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Email y contraseña requeridos' });
   }
   const userId = email.toLowerCase();
+  const referrerRaw = req.body?.referrer ?? req.body?.ref ?? req.query?.ref ?? null;
+  const referrer = referrerRaw != null ? String(referrerRaw).trim().toLowerCase() : '';
   
   // Guardar en memoria (e intentar en DB si existe)
   memory.users[userId] = { 
@@ -1041,6 +1043,32 @@ app.post('/api/auth/register', async (req, res) => {
     is_verified: false 
   };
   safePersistState();
+
+  if (!memory.auth) memory.auth = {};
+  if (!memory.auth.referralPending) memory.auth.referralPending = {};
+  if (referrer && referrer !== userId && isEmail(referrer)) {
+    memory.auth.referralPending[userId] = referrer;
+    safePersistState();
+    if (DB_ENABLED) {
+      try {
+        await db.query(
+          `CREATE TABLE IF NOT EXISTS referral_pending (
+            referred_email VARCHAR(255) NOT NULL,
+            referrer_email VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (referred_email),
+            KEY idx_referrer_email (referrer_email)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+        );
+        await db.query(
+          'INSERT INTO referral_pending (referred_email, referrer_email) VALUES (?, ?) ON DUPLICATE KEY UPDATE referrer_email = VALUES(referrer_email)',
+          [userId, referrer]
+        );
+      } catch (_) {
+        void 0;
+      }
+    }
+  }
   
   try {
     await db.query('INSERT INTO users(name, email, password, is_verified) VALUES(?, ?, ?, 0)', [name, userId, password]);
@@ -2206,6 +2234,31 @@ app.post('/api/orders/confirm', async (req, res) => {
           [dbOrderId, it.id || null, it.name, it.quantity || 1, it.price, it.color || '', it.talle || '']
         );
       }
+      const loyaltyUser = isEmail(customerEmail) ? customerEmail : (isEmail(userId) ? userId : '');
+      if (loyaltyUser) {
+        try {
+          await db.query(
+            `CREATE TABLE IF NOT EXISTS user_loyalty (
+              user_email VARCHAR(255) NOT NULL,
+              referral_points INT NOT NULL DEFAULT 0,
+              profile_points INT NOT NULL DEFAULT 0,
+              review_points INT NOT NULL DEFAULT 0,
+              social_points INT NOT NULL DEFAULT 0,
+              spin_credits INT NOT NULL DEFAULT 0,
+              profile_completed TINYINT(1) NOT NULL DEFAULT 0,
+              last_spin_date DATE NULL,
+              updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              PRIMARY KEY (user_email)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+          );
+          await db.query(
+            'INSERT INTO user_loyalty (user_email, spin_credits) VALUES (?, 1) ON DUPLICATE KEY UPDATE spin_credits = spin_credits + 1',
+            [loyaltyUser]
+          );
+        } catch (_) {
+          void 0;
+        }
+      }
       console.log(`[DB] Pedido #${dbOrderId} guardado con éxito`);
     }
   } catch (dbErr) {
@@ -2325,6 +2378,30 @@ app.post('/api/admin/orders', requireSalesAccess, async (req, res) => {
     const uid = (customer || 'guest').toLowerCase();
     memory.loyaltyFlags[uid] = memory.loyaltyFlags[uid] || { profileCompleted: false, lastSpinDate: null, spinCredits: 0 };
     memory.loyaltyFlags[uid].spinCredits = (Number(memory.loyaltyFlags[uid].spinCredits) || 0) + 1;
+    if (isEmail(uid)) {
+      try {
+        await db.query(
+          `CREATE TABLE IF NOT EXISTS user_loyalty (
+            user_email VARCHAR(255) NOT NULL,
+            referral_points INT NOT NULL DEFAULT 0,
+            profile_points INT NOT NULL DEFAULT 0,
+            review_points INT NOT NULL DEFAULT 0,
+            social_points INT NOT NULL DEFAULT 0,
+            spin_credits INT NOT NULL DEFAULT 0,
+            profile_completed TINYINT(1) NOT NULL DEFAULT 0,
+            last_spin_date DATE NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_email)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+        );
+        await db.query(
+          'INSERT INTO user_loyalty (user_email, spin_credits) VALUES (?, 1) ON DUPLICATE KEY UPDATE spin_credits = spin_credits + 1',
+          [uid]
+        );
+      } catch (_) {
+        void 0;
+      }
+    }
     return res.json({ ok: true, id: orderId });
   } catch (err) {
     if (DB_ENABLED) {
@@ -3445,6 +3522,66 @@ app.post('/api/auth/verify-email', async (req, res) => {
       memory.users[userId] = memory.users[userId] || { name: userId, email: userId };
       memory.users[userId].is_verified = true;
       safePersistState();
+      try {
+        await db.query(
+          `CREATE TABLE IF NOT EXISTS referral_pending (
+            referred_email VARCHAR(255) NOT NULL,
+            referrer_email VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (referred_email),
+            KEY idx_referrer_email (referrer_email)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+        );
+        await db.query(
+          `CREATE TABLE IF NOT EXISTS referrals (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            referred_email VARCHAR(255) NOT NULL,
+            referrer_email VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_referred_email (referred_email),
+            KEY idx_referrer_email (referrer_email)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+        );
+        const pendingRes = await db.query(
+          'SELECT referrer_email FROM referral_pending WHERE referred_email = ? LIMIT 1',
+          [userId]
+        );
+        const pendingRow = Array.isArray(pendingRes.rows) ? pendingRes.rows[0] : null;
+        const referrerEmail = pendingRow?.referrer_email ? String(pendingRow.referrer_email).trim().toLowerCase() : '';
+        if (referrerEmail && referrerEmail !== userId && isEmail(referrerEmail)) {
+          const ins = await db.query(
+            'INSERT IGNORE INTO referrals (referred_email, referrer_email) VALUES (?, ?)',
+            [userId, referrerEmail]
+          );
+          const inserted = Number(ins?.affectedRows) > 0;
+          if (inserted) {
+            await db.query(
+              `CREATE TABLE IF NOT EXISTS user_loyalty (
+                user_email VARCHAR(255) NOT NULL,
+                referral_points INT NOT NULL DEFAULT 0,
+                profile_points INT NOT NULL DEFAULT 0,
+                review_points INT NOT NULL DEFAULT 0,
+                social_points INT NOT NULL DEFAULT 0,
+                spin_credits INT NOT NULL DEFAULT 0,
+                profile_completed TINYINT(1) NOT NULL DEFAULT 0,
+                last_spin_date DATE NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_email)
+              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+            );
+            await db.query(
+              'INSERT INTO user_loyalty (user_email, referral_points) VALUES (?, 50) ON DUPLICATE KEY UPDATE referral_points = referral_points + 50',
+              [referrerEmail]
+            );
+            memory.notifications[referrerEmail] = memory.notifications[referrerEmail] || [];
+            memory.notifications[referrerEmail].push({ id: Date.now(), message: '🎁 ¡Ganaste 50 puntos JJ por un referido verificado!', ts: new Date().toISOString(), read: false });
+          }
+        }
+        await db.query('DELETE FROM referral_pending WHERE referred_email = ?', [userId]);
+      } catch (_) {
+        void 0;
+      }
       return res.json({ ok: true, userId, message: 'Verificado correctamente' });
     } catch (err) {
       void 0;
@@ -3459,6 +3596,21 @@ app.post('/api/auth/verify-email', async (req, res) => {
   memory.users[userId] = memory.users[userId] || { name: userId, email: userId };
   memory.users[userId].is_verified = true;
   safePersistState();
+  try {
+    const referrerEmail = String(memory.auth?.referralPending?.[userId] || '').trim().toLowerCase();
+    if (referrerEmail && referrerEmail !== userId && isEmail(referrerEmail)) {
+      memory.loyalty[userId] = memory.loyalty[userId] || {};
+      memory.loyalty[referrerEmail] = memory.loyalty[referrerEmail] || { breakdown: { purchases: 0, referral: 0, profile: 0, review: 0, social: 0 } };
+      memory.loyalty[referrerEmail].breakdown = memory.loyalty[referrerEmail].breakdown || { purchases: 0, referral: 0, profile: 0, review: 0, social: 0 };
+      memory.loyalty[referrerEmail].breakdown.referral = Number(memory.loyalty[referrerEmail].breakdown.referral || 0) + 50;
+      memory.notifications[referrerEmail] = memory.notifications[referrerEmail] || [];
+      memory.notifications[referrerEmail].push({ id: Date.now(), message: '🎁 ¡Ganaste 50 puntos JJ por un referido verificado!', ts: new Date().toISOString(), read: false });
+      if (memory.auth?.referralPending) delete memory.auth.referralPending[userId];
+      safePersistState();
+    }
+  } catch (_) {
+    void 0;
+  }
   return res.json({ ok: true, userId, message: 'Verificado correctamente' });
 });
 
@@ -3498,10 +3650,55 @@ app.put('/api/user/me', async (req, res) => {
 });
 
 // --- User: Pedidos ---
-app.get('/api/user/orders', (req, res) => {
+app.get('/api/user/orders', async (req, res) => {
   const userId = (req.query.user || 'guest').toLowerCase();
+  if (DB_ENABLED && userId !== 'guest') {
+    try {
+      const ordersRes = await db.query(
+        'SELECT id, customer, customer_email, customer_name, customer_lastname, status, total, payment_method, shipping_recipient, shipping_address, shipping_province, shipping_postal_code, shipping_phone, shipping_carrier, shipping_tracking, created_at, updated_at FROM orders WHERE LOWER(customer) = ? OR LOWER(customer_email) = ? ORDER BY id DESC',
+        [userId, userId]
+      );
+      const ordersRows = Array.isArray(ordersRes.rows) ? ordersRes.rows : [];
+      if (ordersRows.length) {
+        const ids = ordersRows.map(o => o.id);
+        const placeholders = ids.map(() => '?').join(',');
+        const itemsRes = await db.query(
+          `SELECT id, order_id, product_id, name, qty, price, color, talle FROM order_items WHERE order_id IN (${placeholders})`,
+          ids
+        );
+        const items = Array.isArray(itemsRes.rows) ? itemsRes.rows : [];
+        const grouped = ordersRows.map(o => ({
+          id: o.id,
+          customer: o.customer,
+          customerEmail: o.customer_email || (isEmail(o.customer) ? o.customer : ''),
+          customerName: o.customer_name || '',
+          customerLastName: o.customer_lastname || '',
+          status: o.status,
+          total: typeof o.total === 'number' ? o.total : Number(o.total) || 0,
+          paymentMethod: o.payment_method || null,
+          ts: (o.created_at || o.updated_at) ? new Date(o.created_at || o.updated_at).toISOString() : new Date().toISOString(),
+          created_at: o.created_at,
+          updated_at: o.updated_at,
+          shipping: {
+            recipient: o.shipping_recipient || '',
+            address: o.shipping_address || '',
+            province: o.shipping_province || '',
+            postalCode: o.shipping_postal_code || '',
+            phone: o.shipping_phone || '',
+            carrier: o.shipping_carrier || '',
+            tracking: o.shipping_tracking || '',
+          },
+          items: items.filter(it => it.order_id === o.id),
+        }));
+        return res.json(grouped);
+      }
+      return res.json([]);
+    } catch (err) {
+      void 0;
+    }
+  }
   const orders = (memory.orders || []).filter(o => (o.customer || '').toLowerCase() === userId);
-  res.json(orders);
+  return res.json(orders);
 });
 
 // --- User: Favoritos ---
@@ -3532,8 +3729,46 @@ app.delete('/api/user/favorites/:productId', (req, res) => {
 });
 
 // --- User: Actividad ---
-app.get('/api/user/activity', (req, res) => {
+app.get('/api/user/activity', async (req, res) => {
   const userId = (req.query.user || 'guest').toLowerCase();
+  if (DB_ENABLED && userId !== 'guest') {
+    try {
+      const ordersRes = await db.query(
+        'SELECT id, created_at, total FROM orders WHERE LOWER(customer) = ? OR LOWER(customer_email) = ? ORDER BY id DESC',
+        [userId, userId]
+      );
+      const ordersRows = Array.isArray(ordersRes.rows) ? ordersRes.rows : [];
+      if (!ordersRows.length) return res.json({ totalSpent: 0, byMonth: [], mostBought: [] });
+      const ids = ordersRows.map(o => o.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const itemsRes = await db.query(
+        `SELECT order_id, name, qty, price FROM order_items WHERE order_id IN (${placeholders})`,
+        ids
+      );
+      const items = Array.isArray(itemsRes.rows) ? itemsRes.rows : [];
+      const byMonth = {};
+      const productsCount = {};
+      let totalSpent = 0;
+      for (const o of ordersRows) {
+        const month = (o.created_at ? new Date(o.created_at).toISOString() : new Date().toISOString()).slice(0, 7);
+        byMonth[month] = byMonth[month] || { month, orders: 0, amount: 0 };
+        byMonth[month].orders += 1;
+        const orderItems = items.filter(it => it.order_id === o.id);
+        const itemsAmount = orderItems.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+        const amt = (Number(o.total) || 0) > 0 ? (Number(o.total) || 0) : itemsAmount;
+        byMonth[month].amount += amt;
+        totalSpent += amt;
+        for (const it of orderItems) {
+          const key = it.name || `Producto ${it.product_id || ''}`.trim();
+          productsCount[key] = (productsCount[key] || 0) + (Number(it.qty) || 0);
+        }
+      }
+      const mostBought = Object.entries(productsCount).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({ name, count }));
+      return res.json({ totalSpent, byMonth: Object.values(byMonth), mostBought });
+    } catch (err) {
+      void 0;
+    }
+  }
   const orders = (memory.orders || []).filter(o => (o.customer || '').toLowerCase() === userId);
   const byMonth = {};
   const productsCount = {};
@@ -3551,7 +3786,7 @@ app.get('/api/user/activity', (req, res) => {
     });
   });
   const mostBought = Object.entries(productsCount).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([name, count])=>({ name, count }));
-  res.json({ totalSpent, byMonth: Object.values(byMonth), mostBought });
+  return res.json({ totalSpent, byMonth: Object.values(byMonth), mostBought });
 });
 
 // --- User: Notificaciones ---
@@ -3576,6 +3811,91 @@ app.post('/api/user/notifications', (req, res) => {
 // }
 app.get('/api/user/loyalty', (req, res) => {
   const userId = (req.query.user || 'guest').toLowerCase();
+  if (DB_ENABLED && userId !== 'guest') {
+    (async () => {
+      try {
+        await db.query(
+          `CREATE TABLE IF NOT EXISTS user_loyalty (
+            user_email VARCHAR(255) NOT NULL,
+            referral_points INT NOT NULL DEFAULT 0,
+            profile_points INT NOT NULL DEFAULT 0,
+            review_points INT NOT NULL DEFAULT 0,
+            social_points INT NOT NULL DEFAULT 0,
+            spin_credits INT NOT NULL DEFAULT 0,
+            profile_completed TINYINT(1) NOT NULL DEFAULT 0,
+            last_spin_date DATE NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_email)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+        );
+
+        const statsRes = await db.query(
+          `SELECT
+             COUNT(DISTINCT o.id) AS orders_count,
+             COALESCE(SUM(COALESCE(NULLIF(o.total, 0),
+               (SELECT COALESCE(SUM(oi.qty * oi.price), 0) FROM order_items oi WHERE oi.order_id = o.id)
+             )), 0) AS amount
+           FROM orders o
+           WHERE LOWER(o.customer) = ? OR LOWER(o.customer_email) = ?`,
+          [userId, userId]
+        );
+        const statsRow = Array.isArray(statsRes.rows) ? statsRes.rows[0] : null;
+        const purchasesCount = Number(statsRow?.orders_count) || 0;
+        const amount = Number(statsRow?.amount) || 0;
+        const purchasesPoints = Math.floor(amount / 1000);
+
+        const extrasRes = await db.query(
+          'SELECT referral_points, profile_points, review_points, social_points, spin_credits, profile_completed, last_spin_date FROM user_loyalty WHERE user_email = ? LIMIT 1',
+          [userId]
+        );
+        const extrasRow = Array.isArray(extrasRes.rows) ? extrasRes.rows[0] : null;
+        const breakdown = {
+          purchases: purchasesPoints,
+          referral: Number(extrasRow?.referral_points) || 0,
+          profile: Number(extrasRow?.profile_points) || 0,
+          review: Number(extrasRow?.review_points) || 0,
+          social: Number(extrasRow?.social_points) || 0,
+        };
+
+        let tier = 'Bronze';
+        if (purchasesCount >= 7) tier = 'Gold';
+        else if (purchasesCount >= 3) tier = 'Silver';
+        const nextTier = tier === 'Gold' ? null : (tier === 'Silver' ? 'Gold' : 'Silver');
+        const nextThreshold = tier === 'Gold' ? null : (tier === 'Silver' ? 7 : 3);
+        const currentForProgress = purchasesCount;
+        const percent = nextThreshold ? Math.min(100, Math.round((currentForProgress / nextThreshold) * 100)) : 100;
+
+        const totalPoints = breakdown.purchases + breakdown.referral + breakdown.profile + breakdown.review + breakdown.social;
+        const phrase = 'Tu estilo vale más de lo que pensás. Cada compra te acerca a nuevos beneficios.';
+        const spinCredits = Number(extrasRow?.spin_credits) || 0;
+        const profileCompleted = Number(extrasRow?.profile_completed) === 1;
+
+        const payload = {
+          points: totalPoints,
+          tier,
+          purchasesCount,
+          breakdown,
+          progress: { percent, current: currentForProgress, nextThreshold, nextTier },
+          phrase,
+          flags: {
+            profileCompleted,
+            spinCredits,
+            canSpin: spinCredits > 0,
+          }
+        };
+        memory.loyalty[userId] = payload;
+        memory.loyaltyFlags[userId] = memory.loyaltyFlags[userId] || { profileCompleted: false, lastSpinDate: null, spinCredits: 0 };
+        memory.loyaltyFlags[userId].profileCompleted = profileCompleted;
+        memory.loyaltyFlags[userId].spinCredits = spinCredits;
+        return res.json(payload);
+      } catch (err) {
+        void 0;
+      }
+      const current = memory.loyalty[userId] || { points: 0, tier: 'Bronze', purchasesCount: 0, breakdown: { purchases: 0, referral: 0, profile: 0, review: 0, social: 0 }, progress: { percent: 0, current: 0, nextThreshold: 3, nextTier: 'Silver' }, phrase: '' };
+      return res.json(current);
+    })();
+    return;
+  }
   const orders = (memory.orders || []).filter(o => (o.customer || '').toLowerCase() === userId);
   const purchasesCount = orders.length;
   const amount = orders.reduce((acc, o) => acc + (o.items || []).reduce((a, it) => a + ((it.price || 0) * (it.qty || it.quantity || 1)), 0), 0);
@@ -3627,6 +3947,147 @@ app.post('/api/user/loyalty/earn', (req, res) => {
   const { type } = req.body || {};
   const valid = new Set(['referral','profile','review','social','spin']);
   if (!valid.has(type)) return res.status(400).json({ ok: false, error: 'Tipo de acción inválido' });
+
+  if (DB_ENABLED && userId !== 'guest') {
+    (async () => {
+      try {
+        await db.query(
+          `CREATE TABLE IF NOT EXISTS user_loyalty (
+            user_email VARCHAR(255) NOT NULL,
+            referral_points INT NOT NULL DEFAULT 0,
+            profile_points INT NOT NULL DEFAULT 0,
+            review_points INT NOT NULL DEFAULT 0,
+            social_points INT NOT NULL DEFAULT 0,
+            spin_credits INT NOT NULL DEFAULT 0,
+            profile_completed TINYINT(1) NOT NULL DEFAULT 0,
+            last_spin_date DATE NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_email)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`
+        );
+
+        const statsRes = await db.query(
+          `SELECT
+             COUNT(DISTINCT o.id) AS orders_count,
+             COALESCE(SUM(COALESCE(NULLIF(o.total, 0),
+               (SELECT COALESCE(SUM(oi.qty * oi.price), 0) FROM order_items oi WHERE oi.order_id = o.id)
+             )), 0) AS amount
+           FROM orders o
+           WHERE LOWER(o.customer) = ? OR LOWER(o.customer_email) = ?`,
+          [userId, userId]
+        );
+        const statsRow = Array.isArray(statsRes.rows) ? statsRes.rows[0] : null;
+        const purchasesCount = Number(statsRow?.orders_count) || 0;
+        const amount = Number(statsRow?.amount) || 0;
+        const purchasesPoints = Math.floor(amount / 1000);
+
+        const extrasRes = await db.query(
+          'SELECT referral_points, profile_points, review_points, social_points, spin_credits, profile_completed, last_spin_date FROM user_loyalty WHERE user_email = ? LIMIT 1',
+          [userId]
+        );
+        const extrasRow = Array.isArray(extrasRes.rows) ? extrasRes.rows[0] : null;
+        const breakdown = {
+          purchases: purchasesPoints,
+          referral: Number(extrasRow?.referral_points) || 0,
+          profile: Number(extrasRow?.profile_points) || 0,
+          review: Number(extrasRow?.review_points) || 0,
+          social: Number(extrasRow?.social_points) || 0,
+        };
+        let spinCredits = Number(extrasRow?.spin_credits) || 0;
+        let profileCompleted = Number(extrasRow?.profile_completed) === 1;
+
+        let earned = 0;
+        let info = '';
+        const today = new Date().toISOString().slice(0, 10);
+        let lastSpinDate = extrasRow?.last_spin_date || null;
+
+        if (type === 'referral') { earned = 50; info = 'invitar amigos'; breakdown.referral += earned; }
+        if (type === 'profile') {
+          if (profileCompleted) { earned = 0; info = 'perfil ya acreditado'; }
+          else { earned = 20; info = 'completar tu perfil'; breakdown.profile += earned; profileCompleted = true; }
+        }
+        if (type === 'review') { earned = 10; info = 'tu reseña'; breakdown.review += earned; }
+        if (type === 'social') { earned = 5; info = 'tu publicación en redes'; breakdown.social += earned; }
+        if (type === 'spin') {
+          if (spinCredits <= 0) { earned = 0; info = 'sin créditos de ruleta'; }
+          else {
+            const options = [0, 5, 10, 15, 20];
+            earned = options[Math.floor(Math.random() * options.length)];
+            spinCredits = Math.max(0, spinCredits - 1);
+            lastSpinDate = today;
+            info = earned > 0 ? `ruleta (+${earned})` : 'ruleta (sin puntos)';
+            breakdown.social += earned;
+          }
+        }
+
+        let tier = 'Bronze';
+        if (purchasesCount >= 7) tier = 'Gold';
+        else if (purchasesCount >= 3) tier = 'Silver';
+        const nextTier = tier === 'Gold' ? null : (tier === 'Silver' ? 'Gold' : 'Silver');
+        const nextThreshold = tier === 'Gold' ? null : (tier === 'Silver' ? 7 : 3);
+        const percent = nextThreshold ? Math.min(100, Math.round((purchasesCount / nextThreshold) * 100)) : 100;
+        const phrase = 'Tu estilo vale más de lo que pensás. Cada compra te acerca a nuevos beneficios.';
+        const points = breakdown.purchases + breakdown.referral + breakdown.profile + breakdown.review + breakdown.social;
+
+        await db.query(
+          `INSERT INTO user_loyalty (user_email, referral_points, profile_points, review_points, social_points, spin_credits, profile_completed, last_spin_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             referral_points = VALUES(referral_points),
+             profile_points = VALUES(profile_points),
+             review_points = VALUES(review_points),
+             social_points = VALUES(social_points),
+             spin_credits = VALUES(spin_credits),
+             profile_completed = VALUES(profile_completed),
+             last_spin_date = VALUES(last_spin_date)`,
+          [
+            userId,
+            breakdown.referral,
+            breakdown.profile,
+            breakdown.review,
+            breakdown.social,
+            spinCredits,
+            profileCompleted ? 1 : 0,
+            lastSpinDate ? String(lastSpinDate).slice(0, 10) : null,
+          ]
+        );
+
+        const payload = {
+          points,
+          tier,
+          purchasesCount,
+          breakdown,
+          progress: { percent, current: purchasesCount, nextThreshold, nextTier },
+          phrase,
+          flags: {
+            profileCompleted,
+            spinCredits,
+            canSpin: spinCredits > 0,
+          }
+        };
+
+        memory.loyalty[userId] = payload;
+        memory.loyaltyFlags[userId] = memory.loyaltyFlags[userId] || { profileCompleted: false, lastSpinDate: null, spinCredits: 0 };
+        memory.loyaltyFlags[userId].profileCompleted = profileCompleted;
+        memory.loyaltyFlags[userId].spinCredits = spinCredits;
+        memory.loyaltyFlags[userId].lastSpinDate = lastSpinDate;
+
+        memory.notifications[userId] = memory.notifications[userId] || [];
+        const msg = type === 'spin'
+          ? ((spinCredits <= 0 && earned === 0)
+              ? 'No tienes créditos de ruleta disponibles. ¡Realiza una compra para obtener giros!'
+              : (earned > 0 ? `🎉 ¡Ganaste ${earned} puntos JJ en la ruleta!` : '🤏 Esta vez la ruleta no sumó puntos. ¡Suerte la próxima!'))
+          : (earned > 0 ? `+${earned} puntos JJ por ${info}` : `Sin puntos por ${info}`);
+        memory.notifications[userId].push({ id: Date.now(), message: msg, ts: new Date().toISOString(), read: false });
+
+        return res.json({ ok: true, loyalty: payload, earned });
+      } catch (err) {
+        void 0;
+      }
+      return res.status(500).json({ ok: false, error: 'No se pudo procesar la acción' });
+    })();
+    return;
+  }
 
   // Asegurar estado actual
   const orders = (memory.orders || []).filter(o => (o.customer || '').toLowerCase() === userId);
