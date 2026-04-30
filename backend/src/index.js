@@ -10,8 +10,11 @@ const crypto = require('crypto');
 dotenv.config();
 
 function resolveEnvRef(value) {
-  const v = String(value || '').trim();
+  let v = String(value || '').trim();
   if (!v) return '';
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    v = v.slice(1, -1).trim();
+  }
   const m1 = v.match(/^\$(\w+)$/);
   if (m1) return String(process.env[m1[1]] || '').trim();
   const m2 = v.match(/^\$\{(\w+)\}$/);
