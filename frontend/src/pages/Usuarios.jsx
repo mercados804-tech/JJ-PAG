@@ -102,7 +102,7 @@ export default function Usuarios() {
         notify('Tu cuenta de panel no está verificada. Ingresá el código enviado a tu email.', 'warning')
         try {
           const vResp = await postJson('/api/auth/send-verification', { email: emailNormalized })
-          if (vResp.ok && vResp.data?.devCode) setVerificationCode(String(vResp.data.devCode))
+          if (import.meta.env.DEV && vResp.ok && vResp.data?.devCode) setVerificationCode(String(vResp.data.devCode))
         } catch {
           void 0
         }
@@ -121,7 +121,7 @@ export default function Usuarios() {
           notify('Tu cuenta no está verificada. Ingresá el código enviado a tu email.', 'warning')
           try {
             const vResp = await postJson('/api/auth/send-verification', { email: emailNormalized })
-            if (vResp.ok && vResp.data?.devCode) setVerificationCode(String(vResp.data.devCode))
+            if (import.meta.env.DEV && vResp.ok && vResp.data?.devCode) setVerificationCode(String(vResp.data.devCode))
           } catch {
             void 0
           }
@@ -196,7 +196,7 @@ export default function Usuarios() {
       }
       
       setVerificationEmail(emailNormalized)
-      setVerificationCode(data.devCode ? String(data.devCode) : '')
+      setVerificationCode(import.meta.env.DEV && data.devCode ? String(data.devCode) : '')
       setLastPassword(values.password)
       setShowVerification(true)
       notify('Registro exitoso. Ingresá el código enviado a tu email.', 'success')
@@ -304,7 +304,7 @@ export default function Usuarios() {
 
       const data = await resp.json().catch(() => ({}))
       if (resp.ok) {
-        if (data?.devCode) setVerificationCode(String(data.devCode))
+        if (import.meta.env.DEV && data?.devCode) setVerificationCode(String(data.devCode))
         notify('Código reenviado. Revisa tu bandeja de entrada.', 'info')
       } else {
         notify('Error al reenviar código', 'error')

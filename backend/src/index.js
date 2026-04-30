@@ -68,6 +68,7 @@ const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER).trim();
 const SMTP_PLACEHOLDER = (SMTP_USER === 'your-email@gmail.com' || !SMTP_USER || !SMTP_PASS);
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || '').trim();
 const RESEND_FROM = String(process.env.RESEND_FROM || '').trim();
+const ALLOW_DEV_CODES = String(process.env.ALLOW_DEV_CODES || '').trim().toLowerCase() === 'true' || String(process.env.NODE_ENV || '').trim().toLowerCase() === 'development';
 
 // Configuración de nodemailer
 const transporter = nodemailer.createTransport({
@@ -1283,8 +1284,8 @@ app.post('/api/auth/register', async (req, res) => {
   res.json({
     ok: true,
     userId,
-    message: mailOk ? 'Registro exitoso. Revisa tu email para verificar la cuenta.' : 'Registro exitoso. No se pudo enviar el email, usá el código para verificar.',
-    ...(mailOk ? {} : { devCode: code }),
+    message: mailOk ? 'Registro exitoso. Revisa tu email para verificar la cuenta.' : 'Registro exitoso. No se pudo enviar el email. Reintentá en unos minutos.',
+    ...((mailOk || !ALLOW_DEV_CODES) ? {} : { devCode: code }),
   });
 });
 
@@ -3669,8 +3670,8 @@ app.post('/api/auth/send-verification', async (req, res) => {
 
   res.json({
     ok: true,
-    message: mailOk ? 'Código enviado correctamente.' : 'No se pudo enviar el email. Usá el código para verificar.',
-    ...(mailOk ? {} : { devCode: code }),
+    message: mailOk ? 'Código enviado correctamente.' : 'No se pudo enviar el email. Reintentá en unos minutos.',
+    ...((mailOk || !ALLOW_DEV_CODES) ? {} : { devCode: code }),
   });
 });
 
