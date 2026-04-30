@@ -69,6 +69,42 @@ const SMTP_PLACEHOLDER = (SMTP_USER === 'your-email@gmail.com' || !SMTP_USER || 
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || '').trim();
 const RESEND_FROM = String(process.env.RESEND_FROM || '').trim();
 const ALLOW_DEV_CODES = String(process.env.ALLOW_DEV_CODES || '').trim().toLowerCase() === 'true' || String(process.env.NODE_ENV || '').trim().toLowerCase() === 'development';
+const WHATSAPP_SUPPORT_NUMBER = String(process.env.WHATSAPP_SUPPORT_NUMBER || '').replace(/[^\d]/g, '');
+
+function getBackendBaseUrl(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  if (!host) return '';
+  return `${proto}://${host}`;
+}
+
+function buildWhatsAppLink(text) {
+  const encoded = encodeURIComponent(String(text || ''));
+  if (WHATSAPP_SUPPORT_NUMBER) return `https://wa.me/${WHATSAPP_SUPPORT_NUMBER}?text=${encoded}`;
+  return `https://wa.me/?text=${encoded}`;
+}
+
+async function storeVerificationToken({ email, token, expiresMinutes = 30 }) {
+  const emailNorm = String(email || '').trim().toLowerCase();
+  const tokenStr = String(token || '').trim();
+  if (!emailNorm || !tokenStr) return false;
+  const tokenHash = sha256Hex(tokenStr);
+  if (DB_ENABLED) {
+    try {
+      await db.query(
+        'INSERT INTO email_verification_tokens (email, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))',
+        [emailNorm, tokenHash, Number(expiresMinutes) || 30]
+      );
+    } catch (_) {
+      void 0;
+    }
+  }
+  memory.auth = memory.auth || {};
+  memory.auth.verificationLinks = memory.auth.verificationLinks || {};
+  memory.auth.verificationLinks[emailNorm] = { token: tokenStr, exp: Date.now() + (Number(expiresMinutes) || 30) * 60 * 1000 };
+  safePersistState();
+  return true;
+}
 
 // Configuración de nodemailer
 const transporter = nodemailer.createTransport({
@@ -306,6 +342,7 @@ try {
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', true);
 app.use(cors());
 // Aceptar payloads grandes (imágenes en base64) desde el panel admin
 app.use(express.json({ limit: '10mb' }));
@@ -381,6 +418,59 @@ app.get('/api/health', async (req, res) => {
     smtpLastError: memory.smtp?.lastError || null,
     persistPath: PERSIST_PATH,
   });
+});
+
+app.get('/api/auth/verify-link', async (req, res) => {
+  const emailNorm = String(req.query.email || '').trim().toLowerCase();
+  const token = String(req.query.token || req.query.t || '').trim();
+  if (!emailNorm || !token) {
+    return res.status(400).send('Parámetros inválidos');
+  }
+
+  let ok = false;
+  const tokenHash = sha256Hex(token);
+  if (DB_ENABLED) {
+    try {
+      const t = await db.query(
+        'SELECT id FROM email_verification_tokens WHERE email = ? AND token_hash = ? AND used_at IS NULL AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
+        [emailNorm, tokenHash]
+      );
+      const row = (t.rows && t.rows[0]) || null;
+      if (row) {
+        await db.query('UPDATE email_verification_tokens SET used_at = NOW() WHERE id = ?', [row.id]);
+        const updateResult = await db.query('UPDATE users SET is_verified = 1 WHERE email = ?', [emailNorm]);
+        if (updateResult && updateResult.affectedRows === 0) {
+          await db.query(
+            'INSERT INTO users (name, email, password, is_verified) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE is_verified = 1',
+            [emailNorm.split('@')[0], emailNorm, null]
+          );
+        }
+        ok = true;
+      }
+    } catch (_) {
+      void 0;
+    }
+  }
+
+  if (!ok) {
+    const mem = memory.auth?.verificationLinks?.[emailNorm] || null;
+    if (mem && mem.token === token && Date.now() < Number(mem.exp || 0)) {
+      ok = true;
+      memory.users[emailNorm] = memory.users[emailNorm] || { name: emailNorm, email: emailNorm };
+      memory.users[emailNorm].is_verified = true;
+      safePersistState();
+    }
+  }
+
+  if (!ok) {
+    return res.status(400).send('Link inválido o vencido');
+  }
+
+  const frontendUrl = String(process.env.FRONTEND_URL || '').trim() || 'http://localhost:5173';
+  const redirectTo = `${frontendUrl.replace(/\/$/, '')}/usuarios?verified=1&email=${encodeURIComponent(emailNorm)}`;
+  res.status(200).send(
+    `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${redirectTo}"></head><body>Verificado. Redirigiendo...</body></html>`
+  );
 });
 
 // Inicialización automática de DB (schema + seed, idempotente)
@@ -1281,11 +1371,25 @@ app.post('/api/auth/register', async (req, res) => {
     `,
   });
 
+  let verifyLink = null;
+  let whatsappLink = null;
+  if (!mailOk) {
+    const token = crypto.randomBytes(16).toString('hex');
+    await storeVerificationToken({ email: userId, token, expiresMinutes: 30 });
+    const base = getBackendBaseUrl(req);
+    verifyLink = base ? `${base}/api/auth/verify-link?email=${encodeURIComponent(userId)}&token=${encodeURIComponent(token)}` : null;
+    const text = verifyLink
+      ? `Hola! Quiero verificar mi cuenta.\n\nEmail: ${userId}\nLink: ${verifyLink}`
+      : `Hola! Quiero verificar mi cuenta.\n\nEmail: ${userId}\nCódigo: ${code}`;
+    whatsappLink = buildWhatsAppLink(text);
+  }
+
   res.json({
     ok: true,
     userId,
     message: mailOk ? 'Registro exitoso. Revisa tu email para verificar la cuenta.' : 'Registro exitoso. No se pudo enviar el email. Reintentá en unos minutos.',
     ...((mailOk || !ALLOW_DEV_CODES) ? {} : { devCode: code }),
+    ...(mailOk ? {} : { verifyLink, whatsappLink }),
   });
 });
 
@@ -3668,10 +3772,24 @@ app.post('/api/auth/send-verification', async (req, res) => {
     `,
   });
 
+  let verifyLink = null;
+  let whatsappLink = null;
+  if (!mailOk) {
+    const token = crypto.randomBytes(16).toString('hex');
+    await storeVerificationToken({ email: emailNorm, token, expiresMinutes: 30 });
+    const base = getBackendBaseUrl(req);
+    verifyLink = base ? `${base}/api/auth/verify-link?email=${encodeURIComponent(emailNorm)}&token=${encodeURIComponent(token)}` : null;
+    const text = verifyLink
+      ? `Hola! Quiero verificar mi cuenta.\n\nEmail: ${emailNorm}\nLink: ${verifyLink}`
+      : `Hola! Quiero verificar mi cuenta.\n\nEmail: ${emailNorm}\nCódigo: ${code}`;
+    whatsappLink = buildWhatsAppLink(text);
+  }
+
   res.json({
     ok: true,
     message: mailOk ? 'Código enviado correctamente.' : 'No se pudo enviar el email. Reintentá en unos minutos.',
     ...((mailOk || !ALLOW_DEV_CODES) ? {} : { devCode: code }),
+    ...(mailOk ? {} : { verifyLink, whatsappLink }),
   });
 });
 

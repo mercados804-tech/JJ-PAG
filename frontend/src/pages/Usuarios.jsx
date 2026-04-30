@@ -17,6 +17,8 @@ export default function Usuarios() {
   const [showVerification, setShowVerification] = useState(false)
   const [verificationEmail, setVerificationEmail] = useState('')
   const [verificationCode, setVerificationCode] = useState('')
+  const [verificationWhatsAppLink, setVerificationWhatsAppLink] = useState('')
+  const [verificationVerifyLink, setVerificationVerifyLink] = useState('')
   const [loading, setLoading] = useState(false)
   const [lastPassword, setLastPassword] = useState('') // Guardar contraseña temporalmente para auto-login
 
@@ -103,6 +105,8 @@ export default function Usuarios() {
         try {
           const vResp = await postJson('/api/auth/send-verification', { email: emailNormalized })
           if (import.meta.env.DEV && vResp.ok && vResp.data?.devCode) setVerificationCode(String(vResp.data.devCode))
+          if (vResp.ok && vResp.data?.whatsappLink) setVerificationWhatsAppLink(String(vResp.data.whatsappLink))
+          if (vResp.ok && vResp.data?.verifyLink) setVerificationVerifyLink(String(vResp.data.verifyLink))
         } catch {
           void 0
         }
@@ -122,6 +126,8 @@ export default function Usuarios() {
           try {
             const vResp = await postJson('/api/auth/send-verification', { email: emailNormalized })
             if (import.meta.env.DEV && vResp.ok && vResp.data?.devCode) setVerificationCode(String(vResp.data.devCode))
+            if (vResp.ok && vResp.data?.whatsappLink) setVerificationWhatsAppLink(String(vResp.data.whatsappLink))
+            if (vResp.ok && vResp.data?.verifyLink) setVerificationVerifyLink(String(vResp.data.verifyLink))
           } catch {
             void 0
           }
@@ -197,6 +203,8 @@ export default function Usuarios() {
       
       setVerificationEmail(emailNormalized)
       setVerificationCode(import.meta.env.DEV && data.devCode ? String(data.devCode) : '')
+      setVerificationWhatsAppLink(data.whatsappLink ? String(data.whatsappLink) : '')
+      setVerificationVerifyLink(data.verifyLink ? String(data.verifyLink) : '')
       setLastPassword(values.password)
       setShowVerification(true)
       notify('Registro exitoso. Ingresá el código enviado a tu email.', 'success')
@@ -234,6 +242,8 @@ export default function Usuarios() {
       notify('Email verificado con éxito. Iniciando sesión...', 'success')
       setShowVerification(false)
       setVerificationCode('')
+      setVerificationWhatsAppLink('')
+      setVerificationVerifyLink('')
 
       if (lastPassword) {
         const payload = { email: emailNorm, password: lastPassword }
@@ -305,6 +315,8 @@ export default function Usuarios() {
       const data = await resp.json().catch(() => ({}))
       if (resp.ok) {
         if (import.meta.env.DEV && data?.devCode) setVerificationCode(String(data.devCode))
+        if (data?.whatsappLink) setVerificationWhatsAppLink(String(data.whatsappLink))
+        if (data?.verifyLink) setVerificationVerifyLink(String(data.verifyLink))
         notify('Código reenviado. Revisa tu bandeja de entrada.', 'info')
       } else {
         notify('Error al reenviar código', 'error')
@@ -358,6 +370,16 @@ export default function Usuarios() {
                 >
                   {loading ? 'Verificando...' : 'Verificar'}
                 </button>
+
+                {verificationWhatsAppLink && (
+                  <button
+                    onClick={() => window.open(verificationWhatsAppLink, '_blank', 'noopener,noreferrer')}
+                    disabled={loading}
+                    className="w-full bg-green-600 text-white font-black uppercase tracking-widest text-xs py-4 rounded-2xl hover:bg-green-700 disabled:opacity-50 transition-all shadow-xl active:scale-95"
+                  >
+                    Verificar por WhatsApp
+                  </button>
+                )}
                 
                 <div className="flex gap-4">
                   <button
@@ -368,7 +390,11 @@ export default function Usuarios() {
                     Reenviar código
                   </button>
                   <button
-                    onClick={() => setShowVerification(false)}
+                    onClick={() => {
+                      setShowVerification(false)
+                      setVerificationWhatsAppLink('')
+                      setVerificationVerifyLink('')
+                    }}
                     className="flex-1 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:bg-gray-50 rounded-xl transition-colors"
                   >
                     Cancelar
