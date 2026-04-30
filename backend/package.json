@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "build": "node -e \"process.exit(0)\"",
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"
   },
