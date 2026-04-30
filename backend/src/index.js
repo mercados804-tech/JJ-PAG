@@ -318,6 +318,36 @@ app.get('/api/health', async (req, res) => {
     process.env.RAILWAY_GIT_COMMIT ||
     process.env.GIT_COMMIT ||
     null;
+  const dbEnv = (() => {
+    const urlVarNames = ['DATABASE_URL', 'MYSQL_URL', 'MYSQL_PUBLIC_URL', 'MYSQL_URI', 'MYSQL_PUBLIC_URI'];
+    const describeUrl = (name) => {
+      const raw = process.env[name];
+      const resolved = resolveEnvRef(raw);
+      const value = String(resolved || '').trim();
+      if (!value) return { name, present: false };
+      if (!/^mysql:\/\//i.test(value)) return { name, present: true, isMysqlUrl: false };
+      try {
+        const u = new URL(value);
+        const port = u.port ? Number(u.port) : 3306;
+        const database = (u.pathname || '').replace(/^\//, '') || null;
+        const host = u.hostname || null;
+        const isLocal = host === '127.0.0.1' || host === 'localhost';
+        return { name, present: true, isMysqlUrl: true, host, port, database, isLocal };
+      } catch (_) {
+        return { name, present: true, isMysqlUrl: true, parseError: true };
+      }
+    };
+
+    return {
+      urls: urlVarNames.map(describeUrl),
+      params: {
+        MYSQL_HOST: process.env.MYSQL_HOST ? true : false,
+        MYSQL_PORT: process.env.MYSQL_PORT ? true : false,
+        MYSQL_USER: process.env.MYSQL_USER ? true : false,
+        MYSQL_DATABASE: process.env.MYSQL_DATABASE ? true : false,
+      },
+    };
+  })();
   let dbOk = false;
   let dbError = null;
   if (DB_ENABLED) {
@@ -336,6 +366,7 @@ app.get('/api/health', async (req, res) => {
     dbOk,
     dbError,
     dbTarget: db?.dbMeta ? { mode: db.dbMeta.mode, source: db.dbMeta.source || null, host: db.dbMeta.host, port: db.dbMeta.port, database: db.dbMeta.database } : null,
+    dbEnv,
     smtpConfigured: !SMTP_PLACEHOLDER,
     resendConfigured: Boolean(RESEND_API_KEY && RESEND_FROM),
     smtpHost: SMTP_HOST,
