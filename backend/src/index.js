@@ -476,7 +476,7 @@ app.get('/api/auth/verify-link', async (req, res) => {
     return res.status(400).send('Link inválido o vencido');
   }
 
-  const frontendUrl = String(process.env.FRONTEND_URL || '').trim() || 'http://localhost:5173';
+  const frontendUrl = String(process.env.FRONTEND_URL || '').trim() || 'http://localhost:5175';
   const redirectTo = `${frontendUrl.replace(/\/$/, '')}/usuarios?verified=1&email=${encodeURIComponent(emailNorm)}`;
   res.status(200).send(
     `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${redirectTo}"></head><body>Verificado. Redirigiendo...</body></html>`
