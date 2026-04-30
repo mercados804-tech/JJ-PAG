@@ -19,8 +19,27 @@ function resolveEnvRef(value) {
   return v;
 }
 
-const RAW_DB_URL = process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || '';
-const DB_URL = resolveEnvRef(RAW_DB_URL);
+function pickDbUrl() {
+  const candidates = [
+    process.env.DATABASE_URL,
+    process.env.MYSQL_URL,
+    process.env.MYSQL_PUBLIC_URL,
+    process.env.MYSQL_URI,
+    process.env.MYSQL_PUBLIC_URI,
+  ]
+    .map(resolveEnvRef)
+    .map(v => String(v || '').trim())
+    .filter(Boolean)
+    .filter(v => /^mysql:\/\//i.test(v));
+
+  const withHost = candidates.map((value) => {
+    try { return { value, host: new URL(value).hostname || null }; } catch (_) { return { value, host: null }; }
+  });
+  const preferred = withHost.find(x => x.host !== '127.0.0.1' && x.host !== 'localhost') || withHost[0] || null;
+  return preferred ? preferred.value : '';
+}
+
+const DB_URL = pickDbUrl();
 const DB_ENABLED = Boolean(
   (DB_URL && /^mysql:\/\//i.test(DB_URL)) ||
   (process.env.MYSQL_HOST && process.env.MYSQL_USER && process.env.MYSQL_DATABASE)

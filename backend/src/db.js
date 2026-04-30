@@ -14,8 +14,34 @@ function resolveEnvRef(value) {
   return v;
 }
 
-const rawConnectionString = process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || '';
-const connectionString = resolveEnvRef(rawConnectionString) || null;
+function pickMysqlUrl() {
+  const candidates = [
+    'DATABASE_URL',
+    'MYSQL_URL',
+    'MYSQL_PUBLIC_URL',
+    'MYSQL_URI',
+    'MYSQL_PUBLIC_URI',
+  ];
+  const parsed = candidates
+    .map((name) => {
+      const raw = process.env[name];
+      const resolved = resolveEnvRef(raw);
+      const value = String(resolved || '').trim();
+      if (!value) return null;
+      if (!/^mysql:\/\//i.test(value)) return null;
+      let host = null;
+      try { host = new URL(value).hostname || null; } catch (_) { host = null; }
+      const isLocal = host === '127.0.0.1' || host === 'localhost';
+      return { name, value, isLocal };
+    })
+    .filter(Boolean);
+
+  const preferred = parsed.find(p => !p.isLocal) || parsed[0] || null;
+  return preferred ? { name: preferred.name, value: preferred.value } : null;
+}
+
+const picked = pickMysqlUrl();
+const connectionString = picked?.value || null;
 
 const dbMeta = {
   mode: null,
@@ -28,7 +54,7 @@ const dbMeta = {
 let pool = null;
 if (connectionString) {
   dbMeta.mode = 'url';
-  dbMeta.source = process.env.DATABASE_URL ? 'DATABASE_URL' : (process.env.MYSQL_URL ? 'MYSQL_URL' : (process.env.MYSQL_PUBLIC_URL ? 'MYSQL_PUBLIC_URL' : null));
+  dbMeta.source = picked?.name || null;
   const sslFlag = String(process.env.MYSQL_SSL || process.env.DATABASE_SSL || process.env.DB_SSL || '').trim().toLowerCase();
   const sslEnabled = ['1', 'true', 'yes', 'on'].includes(sslFlag);
   const rejectFlag = String(process.env.MYSQL_SSL_REJECT_UNAUTHORIZED || '').trim().toLowerCase();
