@@ -14,8 +14,17 @@ function resolveEnvRef(value) {
   if (m1) return String(process.env[m1[1]] || '').trim();
   const m2 = v.match(/^\$\{(\w+)\}$/);
   if (m2) return String(process.env[m2[1]] || '').trim();
-  const m3 = v.match(/^\$\{\{\s*(\w+)\s*\}\}$/);
-  if (m3) return String(process.env[m3[1]] || '').trim();
+  const m3 = v.match(/^\$\{\{\s*([\w.]+)\s*\}\}$/);
+  if (m3) {
+    const key = String(m3[1] || '').trim();
+    const direct = String(process.env[key] || '').trim();
+    if (direct) return direct;
+    if (key.includes('.')) {
+      const last = key.split('.').pop();
+      return String(process.env[last] || '').trim();
+    }
+    return '';
+  }
   return v;
 }
 
