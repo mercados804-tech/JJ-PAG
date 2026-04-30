@@ -17,6 +17,7 @@ export default function Usuarios() {
   const [showVerification, setShowVerification] = useState(false)
   const [verificationEmail, setVerificationEmail] = useState('')
   const [verificationCode, setVerificationCode] = useState('')
+  const [verificationPhone, setVerificationPhone] = useState('')
   const [verificationWhatsAppLink, setVerificationWhatsAppLink] = useState('')
   const [verificationVerifyLink, setVerificationVerifyLink] = useState('')
   const [loading, setLoading] = useState(false)
@@ -46,6 +47,13 @@ export default function Usuarios() {
 
   const RegisterSchema = Yup.object({
     name: Yup.string().min(2, 'Mínimo 2 caracteres').required('Nombre requerido'),
+    phone: Yup.string()
+      .trim()
+      .required('Teléfono requerido')
+      .test('phone-digits', 'Teléfono inválido', (v) => {
+        const digits = String(v || '').replace(/[^\d]/g, '')
+        return digits.length >= 8 && digits.length <= 15
+      }),
     email: Yup.string()
       .trim()
       .email('Email inválido')
@@ -203,6 +211,7 @@ export default function Usuarios() {
       
       setVerificationEmail(emailNormalized)
       setVerificationCode(import.meta.env.DEV && data.devCode ? String(data.devCode) : '')
+      setVerificationPhone(String(values.phone || ''))
       setVerificationWhatsAppLink(data.whatsappLink ? String(data.whatsappLink) : '')
       setVerificationVerifyLink(data.verifyLink ? String(data.verifyLink) : '')
       setLastPassword(values.password)
@@ -242,6 +251,7 @@ export default function Usuarios() {
       notify('Email verificado con éxito. Iniciando sesión...', 'success')
       setShowVerification(false)
       setVerificationCode('')
+      setVerificationPhone('')
       setVerificationWhatsAppLink('')
       setVerificationVerifyLink('')
 
@@ -309,7 +319,7 @@ export default function Usuarios() {
       const resp = await fetch(apiUrl('/api/auth/send-verification'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: emailNorm })
+        body: JSON.stringify({ email: emailNorm, phone: verificationPhone })
       })
 
       const data = await resp.json().catch(() => ({}))
@@ -392,6 +402,7 @@ export default function Usuarios() {
                   <button
                     onClick={() => {
                       setShowVerification(false)
+                      setVerificationPhone('')
                       setVerificationWhatsAppLink('')
                       setVerificationVerifyLink('')
                     }}
@@ -414,13 +425,19 @@ export default function Usuarios() {
             <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tight">Crea tu <span className="text-[#1E3A8A]">Perfil</span></h2>
           </div>
 
-          <Formik initialValues={{ name: '', email: '', confirmEmail: '', password: '' }} validationSchema={RegisterSchema} onSubmit={onRegisterSubmit} validateOnBlur validateOnChange>
+          <Formik initialValues={{ name: '', phone: '', email: '', confirmEmail: '', password: '' }} validationSchema={RegisterSchema} onSubmit={onRegisterSubmit} validateOnBlur validateOnChange>
             {({ isSubmitting, isValid, dirty }) => (
               <Form className="space-y-6 flex-grow">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1" htmlFor="name">Nombre Completo</label>
                   <Field id="name" name="name" type="text" className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm font-bold text-gray-900 focus:ring-2 focus:ring-blue-100 transition-all" placeholder="JUAN PÉREZ" />
                   <ErrorMessage name="name" component="div" className="text-red-500 text-[10px] font-black uppercase tracking-widest mt-2 ml-1" />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1" htmlFor="phone">Teléfono (WhatsApp)</label>
+                  <Field id="phone" name="phone" type="tel" autoComplete="tel" className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm font-bold text-gray-900 focus:ring-2 focus:ring-blue-100 transition-all" placeholder="54911XXXXXXXX" />
+                  <ErrorMessage name="phone" component="div" className="text-red-500 text-[10px] font-black uppercase tracking-widest mt-2 ml-1" />
                 </div>
 
                 <div className="space-y-1">

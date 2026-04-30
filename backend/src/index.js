@@ -78,10 +78,20 @@ function getBackendBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
-function buildWhatsAppLink(text) {
+function normalizePhoneDigits(value) {
+  const digits = String(value || '').replace(/[^\d]/g, '');
+  return digits || '';
+}
+
+function buildWhatsAppLinkTo(phoneDigits, text) {
   const encoded = encodeURIComponent(String(text || ''));
-  if (WHATSAPP_SUPPORT_NUMBER) return `https://wa.me/${WHATSAPP_SUPPORT_NUMBER}?text=${encoded}`;
+  const to = normalizePhoneDigits(phoneDigits) || '';
+  if (to) return `https://wa.me/${to}?text=${encoded}`;
   return `https://wa.me/?text=${encoded}`;
+}
+
+function buildWhatsAppLink(text) {
+  return buildWhatsAppLinkTo(WHATSAPP_SUPPORT_NUMBER, text);
 }
 
 async function storeVerificationToken({ email, token, expiresMinutes = 30 }) {
@@ -1294,6 +1304,8 @@ async function migrateMemoryToDb() {
 // Registro
 app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
+  const phone = typeof req.body?.phone === 'string' ? req.body.phone : '';
+  const phoneDigits = normalizePhoneDigits(phone);
   if (!email || !password) {
     return res.status(400).json({ ok: false, error: 'Email y contraseña requeridos' });
   }
@@ -1339,6 +1351,17 @@ app.post('/api/auth/register', async (req, res) => {
     await db.query('INSERT INTO users(name, email, password, is_verified) VALUES(?, ?, ?, 0)', [name, userId, password]);
   } catch (err) { /* ignore if no DB */ }
 
+  if (DB_ENABLED && phoneDigits) {
+    try {
+      await db.query(
+        'INSERT INTO user_profiles (user_email, phone, addresses_json, avatar) VALUES (?, ?, NULL, NULL) ON DUPLICATE KEY UPDATE phone = VALUES(phone)',
+        [userId, phoneDigits]
+      );
+    } catch (_) {
+      void 0;
+    }
+  }
+
   // Enviar correo de verificación inmediatamente (sin await para no bloquear)
   const code = generateVerificationCode();
   if (!memory.auth) memory.auth = {};
@@ -1379,9 +1402,9 @@ app.post('/api/auth/register', async (req, res) => {
     const base = getBackendBaseUrl(req);
     verifyLink = base ? `${base}/api/auth/verify-link?email=${encodeURIComponent(userId)}&token=${encodeURIComponent(token)}` : null;
     const text = verifyLink
-      ? `Hola! Quiero verificar mi cuenta.\n\nEmail: ${userId}\nLink: ${verifyLink}`
-      : `Hola! Quiero verificar mi cuenta.\n\nEmail: ${userId}\nCódigo: ${code}`;
-    whatsappLink = buildWhatsAppLink(text);
+      ? `Hola! Quiero verificar mi cuenta.\n\nNombre: ${name || ''}\nEmail: ${userId}\nTeléfono: ${phoneDigits || ''}\nLink: ${verifyLink}`
+      : `Hola! Quiero verificar mi cuenta.\n\nNombre: ${name || ''}\nEmail: ${userId}\nTeléfono: ${phoneDigits || ''}\nCódigo: ${code}`;
+    whatsappLink = buildWhatsAppLinkTo(phoneDigits || WHATSAPP_SUPPORT_NUMBER, text);
   }
 
   res.json({
@@ -3723,8 +3746,29 @@ app.get('/api/user/me', async (req, res) => {
 // Enviar o reenviar código de verificación
 app.post('/api/auth/send-verification', async (req, res) => {
   const { email } = req.body;
+  const phone = typeof req.body?.phone === 'string' ? req.body.phone : '';
+  let phoneDigits = normalizePhoneDigits(phone);
   if (!email) return res.status(400).json({ ok: false, error: 'Email requerido' });
   const emailNorm = String(email).trim().toLowerCase();
+  if (!phoneDigits && DB_ENABLED) {
+    try {
+      const pRes = await db.query('SELECT phone FROM user_profiles WHERE user_email = ? LIMIT 1', [emailNorm]);
+      const pRow = (pRes.rows && pRes.rows[0]) || null;
+      if (pRow && pRow.phone) phoneDigits = normalizePhoneDigits(pRow.phone);
+    } catch (_) {
+      void 0;
+    }
+  }
+  if (DB_ENABLED && phoneDigits) {
+    try {
+      await db.query(
+        'INSERT INTO user_profiles (user_email, phone, addresses_json, avatar) VALUES (?, ?, NULL, NULL) ON DUPLICATE KEY UPDATE phone = VALUES(phone)',
+        [emailNorm, phoneDigits]
+      );
+    } catch (_) {
+      void 0;
+    }
+  }
 
   if (DB_ENABLED) {
     try {
@@ -3780,9 +3824,9 @@ app.post('/api/auth/send-verification', async (req, res) => {
     const base = getBackendBaseUrl(req);
     verifyLink = base ? `${base}/api/auth/verify-link?email=${encodeURIComponent(emailNorm)}&token=${encodeURIComponent(token)}` : null;
     const text = verifyLink
-      ? `Hola! Quiero verificar mi cuenta.\n\nEmail: ${emailNorm}\nLink: ${verifyLink}`
-      : `Hola! Quiero verificar mi cuenta.\n\nEmail: ${emailNorm}\nCódigo: ${code}`;
-    whatsappLink = buildWhatsAppLink(text);
+      ? `Hola! Quiero verificar mi cuenta.\n\nEmail: ${emailNorm}\nTeléfono: ${phoneDigits || ''}\nLink: ${verifyLink}`
+      : `Hola! Quiero verificar mi cuenta.\n\nEmail: ${emailNorm}\nTeléfono: ${phoneDigits || ''}\nCódigo: ${code}`;
+    whatsappLink = buildWhatsAppLinkTo(phoneDigits || WHATSAPP_SUPPORT_NUMBER, text);
   }
 
   res.json({
