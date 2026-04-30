@@ -16,6 +16,8 @@ function resolveEnvRef(value) {
   if (m1) return String(process.env[m1[1]] || '').trim();
   const m2 = v.match(/^\$\{(\w+)\}$/);
   if (m2) return String(process.env[m2[1]] || '').trim();
+  const m3 = v.match(/^\$\{\{\s*(\w+)\s*\}\}$/);
+  if (m3) return String(process.env[m3[1]] || '').trim();
   return v;
 }
 
